@@ -1,0 +1,12 @@
+# test output and the test build (contains an inspection hook)
+tests/results/
+dist/*.test.html
+node_modules/
+__pycache__/
+# never commit real workbooks or their history
+*.xlsx
+!sample/*.xlsx
+!tests/fixtures/*.xlsx
+baselines/
+change-logs/
+~$*

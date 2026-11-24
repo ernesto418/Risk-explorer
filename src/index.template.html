@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  Risk Register Explorer — single-file, offline, read-only viewer.
+  The Content-Security-Policy below makes the browser itself refuse every network
+  request (default-src 'none', connect-src 'none') and only run the one script and
+  stylesheet embedded in this file (identified by their SHA-256 hashes).
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src '{{SCRIPT_HASH}}'; style-src '{{STYLE_HASH}}'; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Risk Register Explorer</title>
+<link rel="icon" type="image/svg+xml" href="{{ICON_SVG}}">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ICON_PNG}}">
+<link rel="apple-touch-icon" href="{{ICON_PNG256}}">
+<style>{{STYLE}}</style>
+</head>
+<body>
+<div id="app"></div>
+<noscript>Risk Register Explorer needs JavaScript. Everything runs locally in this page.</noscript>
+<script>{{SCRIPT}}</script>
+</body>
+</html>

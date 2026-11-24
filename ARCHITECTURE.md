@@ -1,0 +1,327 @@
+# Architecture — Risk Explorer
+
+How the code is built and why. Read the **index**, then use the **routing table** to read only the sections your
+change needs. Sections are self-contained; cross-references are given as `§n`.
+
+## Index
+
+| § | Section | Read it when you… |
+|---|---|---|
+| 0 | [Routing table](#0-routing-table) | start any task |
+| 1 | [Goals and hard constraints](#1-goals-and-hard-constraints) | always (short) |
+| 2 | [Repository layout](#2-repository-layout) | look for a file |
+| 3 | [Build and runtime](#3-build-and-runtime) | add a file, touch the build, CSP, the test hook |
+| 4 | [Workbook format and domain rules](#4-workbook-format-and-domain-rules) | touch anything that reads or writes workbook content |
+| 5 | [XLSX reader](#5-xlsx-reader-02-xlsxjs) | have a file that does not open or reads wrong |
+| 6 | [Domain model and checks](#6-domain-model-and-checks-04-modeljs) | change how objects are built, linked or checked |
+| 7 | [Configuration](#7-configuration-03-configjs) | change scales, thresholds, allowed values, issue texts |
+| 8 | [UI architecture](#8-ui-architecture-01-05-08) | change shared UI pieces, routing, state, side panel |
+| 9 | [Views](#9-views-06-07-07x) | change a specific screen |
+| 10 | [Write mode, baselines and change logs](#10-write-mode-baselines-and-change-logs-07w-writejs) | touch anything that writes to disk |
+| 11 | [Editing the workbook](#11-editing-the-workbook-07z-editjs) | add/change an editable field or an “Add …” action |
+| 12 | [History](#12-history-07x-historyjs) | change how logs/baselines are shown or compared |
+| 13 | [Export to Excel](#13-export-to-excel-07y-exportjs) | change exported sheets/columns |
+| 14 | [Security and privacy](#14-security-and-privacy) | add any I/O, HTML rendering, storage |
+| 15 | [Testing](#15-testing) | always before finishing |
+| 16 | [Decision log](#16-decision-log) | wonder “why is it done like this?” |
+| 17 | [Known limitations and open points](#17-known-limitations-and-open-points) | plan a larger change |
+| 18 | [Recipes](#18-recipes) | do a common change step by step |
+
+## 0. Routing table
+
+| Task | Read |
+|---|---|
+| New/changed format or consistency check | §4, §6, §7, §15, recipe 18.1 |
+| New column in a sheet (read) | §4, §6, recipe 18.2 |
+| New editable field / new “Add …” action | §4, §10, §11, §15, recipe 18.3 |
+| New view or change a view | §8, §9, recipe 18.4 |
+| Matrix, colors, thresholds, scale values | §7, §9 |
+| Connections view (focus, hover, clicks) | §9.8 |
+| Baselines, logs, History | §10, §12 |
+| Export | §13 |
+| Workbook does not open / wrong values | §5, §4 |
+| Anything touching disk, network or HTML injection | §14 first, then §10 |
+| Build, CSP, icon, single-file output | §3 |
+
+## 1. Goals and hard constraints
+
+- **Local only.** No network at runtime, no CDN, no web fonts, no third-party libraries. Enforced by the CSP (§3) and
+  test S1/S3.
+- **Single HTML file** for users (`dist/risk-register-explorer.html`); sources stay modular in `src/`.
+- **Excel stays the database.** The app interprets it; it does not replace it.
+- **Nothing is modified by mistake.** Read-only by default; every disk write goes through one guarded function family
+  (§10); workbook edits are verified cell by cell (§11).
+- **English UI.** (The project owner communicates in Spanish; code, UI and docs are English.)
+- **Single user** on the workbook (no concurrent Excel co-authoring while the app writes).
+- Target browsers: current Edge/Chrome (write mode needs the File System Access API); Firefox read-only.
+
+## 2. Repository layout
+
+```
+build.mjs                  concatenates src/ into dist/ (no dependencies)
+src/index.template.html    page skeleton + CSP with hash placeholders
+src/styles.css             all styles (light/dark via CSS variables)
+src/js/01-util.js          DOM builder h(), icons, string/number helpers, fuzzy matching
+src/js/02-xlsx.js          minimal read-only XLSX/ZIP reader
+src/js/03-config.js        scales, bands, categories, BSI threat catalogue, issue catalogue
+src/js/04-model.js         buildModel(): sheets -> linked objects + all checks
+src/js/05-ui-core.js       shared UI: chips, pills, badges, object cards, detail renderers, side panel, filters
+src/js/06-views-a.js       views: overview, risk matrix, risks, threats
+src/js/07-views-b.js       views: mitigations, assumptions, components, connections, issues
+src/js/07w-write.js        write mode: guarded disk writes, baselines, change logs, snapshot/diff
+src/js/07x-history.js      History view and per-object change history
+src/js/07y-export.js       Export to Excel (own XLSX writer)
+src/js/07z-edit.js         editing the workbook (change sets, XML patching, verification, forms)
+src/js/08-main.js          app shell: file opening, navigation, search, dialogs, theme, start-up
+assets/                    icon (svg/png/ico); embedded into the HTML by build.mjs
+sample/make_sample.py      generates the fictional sample workbook (with deliberate mistakes)
+tests/                     run.cjs (Playwright suite), TEST_PLAN.md, xlsx_diff.py, make_fixtures.py, fixtures/
+dist/                      built single file (committed for users)
+```
+
+## 3. Build and runtime
+
+- `node build.mjs` reads every `src/js/*.js` **in alphabetical order**, concatenates them into one
+  `(() => { "use strict"; … })()` and inlines it with `styles.css` into `index.template.html`.
+  Consequences: all files share one scope (top-level `const`/`function` are visible to later files); **the file name
+  decides load order** (`07-views-b` < `07w` < `07x` < `07y` < `07z` < `08`). Top-level code that runs immediately
+  may only use what earlier files defined; functions may reference later files because they run after start-up.
+- The CSP in the template is filled with the **SHA-256 of the exact script and style**:
+  `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; img-src data:; connect-src 'none'; …`.
+  Never add `unsafe-inline`, external URLs or `<link href>` other than `data:` (test S3).
+- The icon is embedded as `data:` URIs (`assets/icon.svg`, `icon-32.png`, `icon-256.png`).
+- `node build.mjs --test` writes `dist/risk-register-explorer.test.html` that additionally exposes
+  `window.__rre = { state(), write, hist, safeWrite, snapshot, diffSnapshots, EXPORTS, edit }`. It is used only by
+  tests, deleted after the run, and git-ignored. The shipped file has no hook.
+- Start-up (`08-main.js`, last lines): `initTheme()`, `initTooltip()`, `initFileHandling()`, `renderApp()`.
+
+## 4. Workbook format and domain rules
+
+Sheets are recognised by **header names** (`findHeader`, first 60 rows), not by position or sheet name (the name only
+breaks ties). Column lookup uses case-insensitive, whitespace-normalised header text; several headers match by prefix
+(`Frequency…`/`Effects…`/`Risk index…`, with or without `after`). See §17 for the risk of look-alike headers.
+
+| Sheet (role) | Key rules |
+|---|---|
+| **Risk analysis** (“Risik analysis Alpha”) | One row per risk. Threat ID `T.BSI.<n>` and Threat `G 0.<n> <name>` may be **merged** across the risk rows of a threat (the reader fills merged cells). Risk ID `<letters>.<letters>.<n>`. Core values: comma list of Confidentiality/Integrity/Availability. Related assumptions: lines starting with `A.<n>`. Frequency/Effects: fixed lists (§7). **Risk treatment option**: line 1 = introduction (ignored), every further line = one mitigation item written `- text`; a trailing `[ID]` is ignored and stripped. |
+| **Architecture Assumptions** | One row per assumption, ID `A.<n>`. “Linked risks” is usually empty: links are **derived** from the risks’ “Related assumptions”. |
+| **Risk Mitigation Groups** | One row per group (RMG). **Content**: one mitigation item per line (`- text`). |
+| **Risk mitigations individual** | **Master list of mitigation items (RMI)**: RMI ID + Mitigation item text; Groups (RMG IDs, separated by line break or “, ”), Assigned (Si/No), Extended Description, Comment, Responsible. |
+
+Core domain rules (implemented in §6):
+- **Risk index = frequency value × effects value** (rarely 2, medium 3, frequently 6, very frequently 7;
+  negligible 1, limited 3, considerable 5, threatening the existence 7). Bands: ≤10 low, 11–20 medium, >20 high.
+- **Accepted risks** without an after-treatment assessment keep their initial position/index in “after” views
+  (`risk.assumedAfter`, `risk.residual`).
+- **Mitigation items are identified by IDENTICAL text.** A line belongs to the master-list item with exactly the same
+  text and takes its RMI ID; otherwise it is an **RMI-X** (error `C_RMI_UNKNOWN`).
+- **Item → group link = identical text in the group’s Content** (no tags). A risk line without such a Content line is
+  `C_NOT_IN_GROUP`; a Content line without such a risk line is `C_NO_MATCH`.
+- **Components** come from “Affected component” (split on `;`/line breaks; on commas only if every part is a known
+  single name).
+
+## 5. XLSX reader (`02-xlsx.js`)
+
+- Own ZIP reader (central directory, ZIP64, stored/deflate via the browser’s `DecompressionStream`) and XML via
+  `DOMParser`. Reads shared strings, inline strings, rich-text runs (phonetic runs skipped), `_xHHHH_` escapes,
+  CR/LF → `\n`, booleans, cached formula results, merged ranges (filled with the top-left value).
+- Returns `{ sheets: [{ name, path, hidden, rows[r][c], merges, formulasWithoutValue }], zip, wbPath }`.
+  `zip.list()` / `zip.raw()` expose entries and compressed bytes so §11 can rebuild the archive byte-for-byte.
+- Detects OLE files (legacy `.xls`, password/label-encrypted) and non-ZIP input with explicit messages.
+- **Why own reader:** no libraries allowed (§1); the subset needed is small; full control over what is read.
+
+## 6. Domain model and checks (`04-model.js`)
+
+`buildModel(wb, fileInfo)` → `M` with:
+`assumptions, threats, risks, rmis, groups, components, issues`, maps `M.by.<type>` (keyed by ID; RMIs by `m.key`),
+`sheetReport`, `sheetNames`, `sheetObj` (raw sheets by role), `cols` (column index per field and role),
+`lastRow` (per role, for appending), `wb`, `stats`.
+
+Order inside `buildModel` (matters for cross-references):
+1. locate sheets and columns; 2. groups (IDs only); 3. assumptions; 4. RMI master list, then risks (threats are created
+on the fly per Threat ID; each treatment line becomes an occurrence `occ` linked to an RMI); 5. components;
+6. risks ↔ assumptions; 7. group Content lines → items; 8. item ↔ group linking by identical text, RMI master checks
+(Groups/Assigned, unused), derived `g.rmis`, `g.risks`, `risk.groups`.
+
+Object shapes (main fields): every object has `type, id, issues[]`, and `sheet,row` when it maps to a row.
+- `risk`: `threat, description, components[], coreValues[], assumptions[], freq/effect/freqAfter/effectAfter` (config
+  items), `…Raw` strings, `index, indexAfter, residual, assumedAfter, category, intro, items[occ], groups[]`.
+- `occ` (line in a treatment cell): `risk, rmi, line, raw, text, groups[]`; group Content line `item`: `group, rmi, line, raw, text, match`.
+- `rmi`: `id` (master ID or `RMI-X`), `key` (unique), `base` (in master list), `text, occ[], listed[], groups[], risks[]`,
+  master fields `groupsRaw, assignedRaw, extDescription, comment, responsible`.
+- `threat`: `id, name, title, num, relevance, risks[]`; `group`: `id, name, treatment, items[], rmis[], risks[]`;
+  `assumption`: `id, title, …, risks[], components[]`; `component`: `name, risks[], assumptions[]`.
+
+**Issue system.** `addIssue(code, msg, {sheet,row,col,line,excerpt,hint,on:[objects]})`. The code’s category
+(`format` / `consistency` / `warning`), title and explanation live in `ISSUE_TYPES` (§7). `on` attaches the issue to
+objects; the UI shows per-object badges and the Errors view groups them. Every issue must point to a sheet/cell/line
+so it can be fixed in Excel.
+
+**Why:** one pass builds a fully linked in-memory graph so every view is a cheap read; Excel’s “one cell, many
+items” is normalised into objects (decision D3).
+
+## 7. Configuration (`03-config.js`)
+
+`CFG.freq`, `CFG.effect` (keys, labels, values, regex for accepted spellings incl. the workbook typo “threatining”),
+`CFG.bands` (thresholds), `CFG.categories` (A–D treatment options), `CFG.coreValues`, `CFG.patterns` (ID formats),
+`BSI_THREATS` (47 elementary threats with C/I/A from BSI 200-3 Table 1), `ISSUE_CATS`, `ISSUE_TYPES`.
+Change values here, never hard-code them in views. Issue codes are referenced by tests (F2), keep them stable.
+
+## 8. UI architecture (01, 05, 08)
+
+- **No framework.** `h('tag.class', {props}, …children)` builds DOM; children are always text nodes
+  (`textContent`), never HTML strings (§14). `svg()` for SVG, `icon(name)` from the `ICONS` path table.
+  Use `add()/fill()` helpers (they flatten arrays and skip null) instead of `el.append()` with arrays.
+- **State**: global `M` (model) and `state` (`file, handle, hash, view, drawer stack, expanded cards, ui.<view>
+  filters`). Views keep their filter state in `state.ui.<view>` so it survives navigation.
+- **Routing**: `location.hash` `#/<view>` → `showView()` renders `VIEWS[key]()` into `<main>`, then appends the
+  view’s **Add** button (§11) and **Export** button (§13) to the view header.
+- **Side panel** (`openObj(o)`, `renderDrawer`): stack with back button; content from `DETAIL[type]`; plus Edit
+  buttons (§11) and Change history (§12). `objCard` = expandable card used by list views.
+- Tooltips: any element with `data-tip` (`tip:` prop). Theme: `data-theme` on `<html>`; colours as CSS variables in
+  `styles.css` (palette validated for colour-vision deficiency; status colours always with icon + label).
+
+## 9. Views (06, 07, 07x)
+
+Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body on filter changes.
+1. **overview** – KPIs, profile bars, count matrices, top residual risks, treatment/core-value bars, quality tiles.
+2. **matrix** – 4×4 grid; cells list risks or threats; before / after / side by side / movement (SVG arrows).
+3. **risks** – filterable, groupable list of risk cards. 4. **threats** – 47-tile BSI coverage + threat cards.
+5. **mitigations** – groups (reach bars, cards) and all items. 6. **assumptions**. 7. **components** – heat map.
+8. **connections** – columns of object types, links derived through risks, SVG curves.
+   Focus = list of **terms** (`state.ui.flow.focus: Object[][]`): objects inside a term are OR (Ctrl/Cmd+click
+   batch, applied on key release), terms are AND (plain click). Hover highlights only objects linked through the
+   hovered object’s own risks. Single click is delayed 280 ms; a double click (also a slow one on the same spot within
+   650 ms) opens details and never changes the focus (`clickTimer`, `lastClick`, `flowUndo`).
+9. **history** (§12). 10. **issues** – findings grouped by check / object / sheet & row.
+
+## 10. Write mode, baselines and change logs (`07w-write.js`)
+
+Write mode (`write = { on, author, dir }`) is enabled with a name and a folder picked with `showDirectoryPicker`.
+
+**All disk writes go through `rawWrite()`, and only three guarded functions may call it** (enforced by test S2):
+- `safeWrite(kind, name, data)` — new file in `baselines/` or `change-logs/` only; name must match a generated
+  pattern; never the workbook name; **refuses existing files**; read-back hash check.
+- `safeAppendLog(name, oldText, newObj)` — rewrites the current log only if the file is unchanged since read and the
+  new content only **appends entries** (header and earlier entries must be identical).
+- `writeWorkbookFile(handle, bytes)` — the workbook, only the opened handle, only if the file on disk still has the
+  hash loaded (`state.hash`); restores the original bytes if the write fails.
+
+**Baselines and logs.** *Create baseline* copies the workbook byte-for-byte to
+`baselines/<YYYY-MM-DD_HHMMSS>_<workbook>.xlsx` (skipped if identical to the latest one) and **starts a new log**
+`change-logs/<stamp>_<author>.json` (schema 2): header with author, time, hashes, previous baseline and the object-level
+diff since it, plus `entries: []`. Every save from the editor appends `{type:'save', at, author, action, workbook
+{sha256Before, sha256After}, cells[{sheet, cell, object, field, calculated, old, new}], summary, changes}` to the newest
+log. A baseline never modifies an earlier log.
+`snapshot(M)` / `diffSnapshots(a,b)` produce the object-level diff (risks, threats, assumptions, groups, master RMIs).
+
+## 11. Editing the workbook (`07z-edit.js`)
+
+Pipeline of every save:
+1. **High-level edit → `ChangeSet`** (`editRisk`, `renameRmi`, `addRmi`, `editThreat`, `editAssumption`,
+   `renameComponent`, `editGroup`, `addRisk`, `addAssumption`, `addGroup`). A change set holds cell writes
+   (`set(sh,r,c,value,computed)`) and appended rows (`addRow`). Unchanged values are dropped. Merged-child cells and
+   formula cells (unless “computed”) are refused.
+2. **Preview** (`commit`): object, column header, cell, old → new, “calculated” marker. User confirms.
+3. **Build** (`buildEdited`): parse only the touched sheet XMLs, patch cells (inline strings; style `s` kept), append
+   rows copying the template row’s attributes and cell styles, shift template formulas for computed columns, extend
+   conditional-formatting / data-validation / autofilter / table ranges that ended at the last row, set
+   `fullCalcOnLoad` when formulas are involved. `rebuildZip` copies every untouched entry’s **compressed bytes as
+   is**; only patched parts are re-deflated.
+4. **Verify** (`verifyEdited`): re-read the new bytes and compare **every cell of every sheet** with the old workbook;
+   only planned cells may differ; merges must be equal. Otherwise nothing is written.
+5. **Write** (`writeWorkbookFile`, §10), **log** (`appendSaveLog`), **reload** the workbook and reopen the object.
+
+Propagation rules (decided with the owner): mitigation-item text is replaced in every **identical** line (risk cells,
+group Content, master list row) — variants untouched; assumption titles in “Related assumptions”; component names in
+risks and assumptions; threat names in every row of the Threat ID. New values use the **spelling already used in the
+workbook** (`spelling()`); new rows go **after the last row** of the table. Adding an item requires a group; a new
+item requires an RMI ID and gets a row in the master list (Groups, Assigned updated).
+
+UI entry points: `editButtons(o)` in the side panel, `ADDERS` per view (`addButton`). Forms: `formDialog(title,
+fields, onSubmit)` where `onSubmit` returns a `ChangeSet` or throws a user-readable error.
+
+## 12. History (`07x-history.js`)
+
+Reads `baselines/` and `change-logs/` (read access is enough; a folder can be picked without write mode).
+Log files are flattened into `hist.logs` entries (baseline headers and every save). Tabs: *Change logs* and
+*Compare baselines* (any two baselines or baseline vs current workbook, computed live with `diffSnapshots`).
+`historySection(o)` adds an object’s change history to its side panel. Old schema-1 logs remain readable.
+
+## 13. Export to Excel (`07y-export.js`)
+
+`EXPORTS[view] = { label, run() → { filter, sheets: [{ name, cols: [[header, width]], rows }] } }`. `buildXlsx` writes
+a minimal valid XLSX (inline strings, styles for header and Low/Medium/High fills, frozen header, autofilter) and
+`zipFiles` stores it (CRC-32, no compression). Downloaded via a `blob:` link with `download` — no file-system API, so
+it cannot touch the workbook or the repository folder. Every export adds an “About” sheet (source, time, filter).
+Exports respect the current filters/focus of the view.
+
+## 14. Security and privacy
+
+- No network: CSP + no fetch/XHR/WebSocket in sources (test S1). No `innerHTML`, `eval`, `new Function` (S1); cell text
+  is rendered as text (test S5 with injection fixture).
+- Disk writes only via §10 guards; no delete API anywhere (`removeEntry` forbidden by S1).
+- `localStorage` holds only the theme preference.
+- Real workbooks, baselines and logs must never be committed (`.gitignore`); all fixtures are fictional.
+
+## 15. Testing
+
+`node tests/run.cjs` rebuilds both outputs, runs every test in Chromium and writes `tests/results/report.md/json`.
+Groups: **S** static/security guarantees, **F** functional reading/checks/views, **X** export, **W** write mode &
+baselines, **H** history, **E** editing (each edit is diffed independently with `tests/xlsx_diff.py` / openpyxl).
+Write tests use the browser’s private file system (OPFS) and shimmed pickers — never real folders.
+`tests/TEST_PLAN.md` lists every test and what is still to automate. Fixtures: `python3 tests/make_fixtures.py`
+(regenerates sample, LibreOffice copy, Excel-style rich-text copy, injection and broken files).
+**Every change must keep the suite green; add a test for every new rule or editable field.**
+
+## 16. Decision log
+
+| # | Decision | Why |
+|---|---|---|
+| D1 | One self-contained HTML, no libraries, CSP `default-src 'none'` | Sensitive data; must run offline on locked-down machines; nothing can leak or be fetched. |
+| D2 | Own XLSX reader and writer | No dependencies allowed; needed subset is small; byte-level control needed for safe editing. |
+| D3 | Normalise Excel into linked objects (RMI per line, components, derived links) | Excel keeps several items per cell and no relations; views and checks need a graph. |
+| D4 | Columns found by header text | Owner inserts/moves columns; positions are unstable. |
+| D5 | Identity of mitigation items = identical text; master list “Risk mitigations individual” gives IDs; unknown = RMI-X | Items have no ID in the treatment/Content cells; exact text is the only unambiguous key. Owner requirement. |
+| D6 | Group tags `[ID]` ignored; links by identical Content text | Owner requirement; tags duplicated information and drifted. |
+| D7 | Issues always carry sheet/cell/line, three categories with distinct icons | The fix happens in Excel; users must find the cell. |
+| D8 | Read-only by default; write mode needs a name; three guarded write functions | “Nothing modified by mistake” is the top priority; author recorded in logs. |
+| D9 | Edits patch only the target cells, copy all other archive parts byte-for-byte, verify every cell | Avoids reformatting/losing Excel features; makes unintended changes detectable before writing. |
+| D10 | Baseline = byte copy + new log; saves append to the newest log; logs never rewritten otherwise | Owner requirement: one log per baseline period; audit trail must be append-only. |
+| D11 | New rows appended after the table, formatted like the row above | Inserting rows would shift merges, formulas, CF ranges — higher risk (owner chose “end of table”). |
+| D12 | Single user, refuse save if file changed on disk | Excel co-authoring cannot be joined from a local file; avoids overwriting others’ work. |
+| D13 | Connections: AND between clicks, OR within a Ctrl batch, double click = details | Owner requirements for exploring paths. |
+| D14 | Export via download, not file-system API | Keeps export unable to touch workbook or repository. |
+
+## 17. Known limitations and open points
+
+- No delete of objects (risk, item, group, assumption) from the app.
+- Rewritten cells lose partial rich-text formatting (cell style kept).
+- New rows do not copy formulas of user columns other than Risk index / index after / reduction.
+- Look-alike headers (a new column starting with “Frequency”, “Effects”, “Risk index”, “Comment”…) placed left of the
+  original can be picked instead; header detection takes the first match.
+- Write mode and History folder access need Chromium (File System Access API).
+- Not tested against real Microsoft Excel files in CI (LibreOffice/openpyxl only); Excel-written fixture is simulated.
+
+## 18. Recipes
+
+**18.1 Add a check.** Add the code to `ISSUE_TYPES` (§7, category/title/explanation) → emit it in `buildModel` with
+`addIssue(code, msg, {sheet,row,col,line,on:[objects]})` at the right step (§6 order) → add the seeded mistake to
+`sample/make_sample.py`, regenerate fixtures (`python3 tests/make_fixtures.py`) → add the code to the F2 list or a
+dedicated test → update `tests/TEST_PLAN.md`.
+
+**18.2 Read a new column.** Add it to the `columns(…)` spec of its sheet in `buildModel` (header regex, label,
+required?) → store it on the object → show it in `DETAIL[type]` (05) and, if useful, in `EXPORTS` (13) and in
+`snapshot()` (10) so History tracks it.
+
+**18.3 Make a field editable / add an action.** Write an edit function that only calls `cs.set` / `cs.addRow`
+(never touches XML) → add the field to the form in `EDITORS` / `*Fields()` with validation that throws readable
+errors → if the text is duplicated elsewhere, propagate to every identical occurrence (§11) → add an **E** test that
+diffs the workbook with `xlsx_diff.py` and asserts exactly the expected cells changed.
+
+**18.4 Add a view.** `VIEWS.<key> = function () { … return h('div.view', viewHead(…), …) }` in a views file →
+add it to `NAV` in `08-main.js` → optional `EXPORTS.<key>` and `ADDERS.<key>` → add it to the `VIEWS` list in
+`tests/run.cjs` (S4 tour) and a functional test.
+
+**After any change:** `node build.mjs && node tests/run.cjs`, keep `README.md`, this document and
+`tests/TEST_PLAN.md` in sync.
