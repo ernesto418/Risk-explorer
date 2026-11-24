@@ -65,8 +65,8 @@ VIEWS.overview = function () {
   const kpis = h('div.kpis',
     kpi('risk', risks.length, 'Risks', plural(M.risks.filter((r) => r.issues.length).length, 'has', 'have') + ' open issues', 'risks'),
     kpi('threat', M.threats.filter((t) => t.risks.length).length, 'Threats with risks', elementary.size + ' of 47 elementary threats', 'threats'),
-    kpi('rmi', M.rmis.length, 'Mitigation items', M.stats.occ + ' lines in the risk analysis', 'mitigations'),
-    kpi('group', M.groups.length, 'Mitigation groups', (M.stats.occ - M.stats.occAssigned) + ' lines without group yet', 'mitigations'),
+    kpi('rmi', M.rmis.length, 'Mitigation items', M.stats.occ + ' risk links (RMI IDs of the risks)', 'mitigations'),
+    kpi('group', M.groups.length, 'Mitigation groups', (M.stats.occ - M.stats.occAssigned) + ' risk links without group yet', 'mitigations'),
     kpi('assumption', M.assumptions.length, 'Assumptions', M.assumptions.filter((a) => a.risks.length).length + ' linked to risks', 'assumptions'),
     kpi('component', M.components.length, 'Components', 'affected assets', 'components'));
 
@@ -89,10 +89,10 @@ VIEWS.overview = function () {
   }))), 'span4');
 
   const ap = M.stats.occ ? Math.round((M.stats.occAssigned / M.stats.occ) * 100) : 0;
-  const assign = cardBox('Group assignment', 'Mitigation lines found with identical text in a group’s Content', h('div',
-    h('div.meter-head', h('b', ap + '%'), h('span.muted', M.stats.occAssigned + ' of ' + M.stats.occ + ' lines assigned')),
+  const assign = cardBox('Group assignment', 'Risk links whose RMI ID is listed by a Risk Mitigation Group', h('div',
+    h('div.meter-head', h('b', ap + '%'), h('span.muted', M.stats.occAssigned + ' of ' + M.stats.occ + ' links assigned')),
     h('div.meter', { role: 'img', 'aria-label': ap + '% assigned' }, h('span', { style: { width: ap + '%' } })),
-    h('p.note', icon('info', 12), M.rmis.length + ' distinct mitigation items in ' + M.groups.length + ' groups; ' + M.rmis.filter((m) => m.occ.length && !m.groups.length).length + ' items not in any group yet.')), 'span4',
+    h('p.note', icon('info', 12), M.rmis.length + ' distinct mitigation items in ' + M.groups.length + ' groups; ' + M.rmis.filter((m) => m.occ.length && !m.groups.length).length + ' items used by risks but not in any group.')), 'span4',
     h('button.btn.ghost.sm', { type: 'button', onclick: () => go('mitigations') }, 'Mitigations', icon('arrow', 12)));
 
   const quality = cardBox('Workbook quality', 'Findings of the automatic format and consistency checks', h('div.q-tiles', Object.keys(ISSUE_CATS).map((c) =>

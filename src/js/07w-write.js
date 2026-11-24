@@ -16,11 +16,11 @@ function snapshot(m) {
   return {
     risk: obj(m.risks, (r) => ({ threat: r.threat ? r.threat.id : '', description: r.description, component: r.componentRaw, coreValues: r.coreValues.join(', '),
       assumptions: r.assumptionRefs.map((a) => a.id).join(', '), frequency: r.freqRaw, effects: r.effectRaw, riskIndex: r.index, treatmentCategory: r.categoryRaw,
-      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, intro: r.intro, lines: r.items.map((o) => o.raw) })),
+      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, rmis: r.items.map((o) => o.rmi.id) })),
     threat: obj(m.threats, (t) => ({ name: t.name, relevance: t.relevance })),
     assumption: obj(m.assumptions, (a) => ({ title: a.title, description: a.description, components: a.componentsRaw, validityAlpha: a.validityAlpha, validityBeta: a.validityBeta, comment: a.comment })),
-    rmi: obj(m.rmis.filter((x) => x.base && !/#row/.test(x.key)), (x) => ({ text: x.text, groups: x.groupsRaw, assigned: x.assignedRaw, extendedDescription: x.extDescription, comment: x.comment, responsible: x.responsible })),
-    group: obj(m.groups, (g) => ({ name: g.name, treatment: g.treatment, lines: g.items.map((i) => i.raw) })),
+    rmi: obj(m.rmis.filter((x) => x.base && !/#row/.test(x.key)), (x) => ({ text: x.text, extendedDescription: x.extDescription, comment: x.comment, responsible: x.responsible })),
+    group: obj(m.groups, (g) => ({ name: g.name, treatment: g.treatment, rmis: g.items.map((i) => i.rmi.id) })),
   };
 }
 /** Object-level diff of two snapshots (a may be null for the first baseline). */
@@ -34,7 +34,7 @@ function diffSnapshots(a, b) {
       const fields = {}; let linesAdded, linesRemoved;
       for (const k of Object.keys(B[id])) {
         const x = A[id][k], y = B[id][k];
-        if (Array.isArray(y)) { const la = y.filter((l) => !x.includes(l)), lr = x.filter((l) => !y.includes(l)); if (la.length) linesAdded = la; if (lr.length) linesRemoved = lr; }
+        if (Array.isArray(y)) { const xa = Array.isArray(x) ? x : [], la = y.filter((l) => !xa.includes(l)), lr = xa.filter((l) => !y.includes(l)); if (la.length) linesAdded = la; if (lr.length) linesRemoved = lr; }
         else if ((x == null ? '' : x) !== (y == null ? '' : y)) fields[k] = { from: x == null ? null : x, to: y == null ? null : y };
       }
       if (Object.keys(fields).length || linesAdded || linesRemoved) { s.modified++; changes.push({ type, id, change: 'modified', fields, linesAdded, linesRemoved }); }

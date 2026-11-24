@@ -7,7 +7,7 @@ function rmiCard(m) {
   return objCard(m, {
     main: [m.groups.length ? m.groups.map((g) => chip(g)) : h('span.tag.bad', { tip: 'Error: not assigned to any Risk Mitigation Group' }, 'no group'),
       h('span.meta-n', { tip: 'Risks using this item' }, icon('risk', 12), plural(m.risks.length, 'risk')),
-      m.variants.size > 1 ? h('span.meta-n', { tip: 'Different spellings of this item' }, m.variants.size + ' spellings') : null],
+      m.base ? null : h('span.tag.bad', { tip: 'Consistency error: this RMI ID is not in the master list' }, 'unknown ID')],
     side: m.risks.length ? pill(maxOf(m.risks, (r) => r.index), 'Highest initial risk index among the risks using this item') : null,
   });
 }
@@ -33,7 +33,7 @@ VIEWS.mitigations = function () {
         body.append(h('h2.list-title', 'Mitigation groups ', h('span.count', M.groups.length)), h('div.list', M.groups.map(groupCard)));
       }
       if (unassigned.length) {
-        add(body, h('h2.list-title', 'Not assigned to any group ', h('span.count', unassigned.length), h('span.ibadge.cat-consistency', { tip: 'Consistency error: every mitigation item must be assigned to a group' }, icon('consistency', 12))),
+        add(body, h('h2.list-title', 'Used by risks but not in any group ', h('span.count', unassigned.length), h('span.ibadge.cat-consistency', { tip: 'Consistency error: every mitigation item used by a risk must be listed by a group' }, icon('consistency', 12))),
           h('div.list', unassigned.slice(0, 200).map(rmiCard)), unassigned.length > 200 ? h('p.note', 'Showing the first 200. Use “All items” to search.') : null);
       }
     } else {
@@ -53,10 +53,10 @@ VIEWS.mitigations = function () {
   const drawControls = () => {
     fill(controls, segmented([{ value: 'groups', label: 'Groups', icon: 'group' }, { value: 'items', label: 'All items', icon: 'rmi' }], ui.tab, (v) => { ui.tab = v; drawControls(); draw(); }, 'View'));
     if (ui.tab === 'items') controls.append(searchBox('Search mitigation items…', ui.q, (v) => { ui.q = v; draw(); }),
-      segmented([{ value: 'all', label: 'All' }, { value: 'unassigned', label: 'Without group' }, { value: 'shared', label: 'Used by several risks' }, { value: 'issues', label: 'With errors' }, { value: 'orphan', label: 'Only in group content' }], ui.only, (v) => { ui.only = v; drawControls(); draw(); }, 'Filter'));
+      segmented([{ value: 'all', label: 'All' }, { value: 'unassigned', label: 'Without group' }, { value: 'shared', label: 'Used by several risks' }, { value: 'issues', label: 'With errors' }, { value: 'orphan', label: 'Not linked to any risk' }], ui.only, (v) => { ui.only = v; drawControls(); draw(); }, 'Filter'));
   };
   drawControls(); draw();
-  return h('div.view', viewHead('Mitigations', 'Each line of a “Risk treatment option” cell is one mitigation item (RMI). Items are linked to a Risk Mitigation Group (RMG) when the identical text appears in the group’s Content.'), controls, body);
+  return h('div.view', viewHead('Mitigations', 'Mitigation items (RMI) and their texts come from “Risk mitigations individual”. Risks and Risk Mitigation Groups (RMG) refer to them by RMI ID in their “RMI ID” column (one ID per line).'), controls, body);
 };
 
 /* =============================== ASSUMPTIONS =============================== */
@@ -316,7 +316,7 @@ VIEWS.connections = function () {
     requestAnimationFrame(paint);
     cleanup = () => { if (ro) ro.disconnect(); };
     host.prepend(h('p.note', icon('info', 12), f ? 'Showing ' + total + ' objects on the paths through ' + (single ? 'the focused object' : 'the focus') + '. Click another object to narrow further (AND); Ctrl+click several objects to add them together (same type = OR). ' : total + ' objects. Click any object to isolate its connections, or Ctrl+click several and release Ctrl; hover to highlight only the objects linked to it through its own risks. ',
-      'Line thickness = number of risks behind a link. Items are linked to groups by identical text in the group’s Content.'));
+      'Line thickness = number of risks behind a link. Items are linked to groups by the RMI IDs listed in the group’s “RMI ID” cell.'));
   };
   const drawControls = () => {
     fill(controls, h('div.ctl', h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {

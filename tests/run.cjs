@@ -99,11 +99,12 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   let base = null;
   await test('F1', 'Sample workbook: sheets recognised, Beta sheet ignored, object counts as expected', async () => {
     await load(page, FILE_T, fx('sample.xlsx')); base = await model();
-    eq(base.n, [19, 41, 40, 9, 10, 8], 'threats/risks/items/groups/assumptions/components'); assert(base.sheets.includes('Assumed Risks Beta:ignored'), 'Beta sheet not ignored: ' + base.sheets);
+    eq(base.n, [19, 41, 42, 9, 10, 8], 'threats/risks/items/groups/assumptions/components'); assert(base.sheets.includes('Assumed Risks Beta:ignored'), 'Beta sheet not ignored: ' + base.sheets);
   });
   await test('F2', 'Every seeded mistake of the sample is reported by its check', async () => {
-    const want = ['C_ASSUMPTION_UNKNOWN', 'C_DUP_ID', 'C_INDEX', 'C_NOT_IN_GROUP', 'C_RMI_GROUPS', 'C_RMI_UNKNOWN', 'C_NO_MATCH', 'C_REDUCTION', 'C_THREAT_MISMATCH', 'F_ASSUMPTION_REF', 'F_BULLET', 'F_INTRO', 'F_VALUE', 'W_AFTER_HIGHER', 'W_DUP_LINE', 'W_MISSING', 'W_MULTI_GROUP', 'W_SIMILAR_NAME', 'W_UNUSED_ASSUMPTION', 'W_UNUSED_GROUP', 'W_UNUSED_RMI'];
+    const want = ['C_ASSUMPTION_UNKNOWN', 'C_DUP_ID', 'C_INDEX', 'C_NOT_IN_GROUP', 'C_RMI_UNKNOWN', 'C_REDUCTION', 'C_THREAT_MISMATCH', 'F_ASSUMPTION_REF', 'F_RMI_REF', 'F_VALUE', 'W_AFTER_HIGHER', 'W_DUP_LINE', 'W_DUP_TEXT', 'W_MISSING', 'W_MULTI_GROUP', 'W_NOT_FORMULA', 'W_SIMILAR_NAME', 'W_UNUSED_ASSUMPTION', 'W_UNUSED_GROUP', 'W_UNUSED_RMI'];
     const miss = want.filter((c) => !base.codes.includes(c)); eq(miss, [], 'checks that did not fire');
+    eq(base.codes.filter((c) => /^(F_BULLET|F_INTRO|F_EMPTY_ITEM|C_NO_MATCH|C_RMI_GROUPS|W_UNCACHED)$/.test(c)), [], 'text-based or obsolete checks that fired');
     const ui = await page.evaluate(() => [...document.querySelectorAll('.counter b')].map((b) => +b.textContent)); eq(ui, [base.cats.format, base.cats.consistency, base.cats.warning], 'top-bar counters vs model');
   });
   await test('F3', 'Reader: Excel-style (rich text, CR escapes) and LibreOffice copies give the identical model', async () => {
@@ -164,21 +165,42 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     eq(await page.evaluate(() => [window.__spy.writes.length, window.__spy.creates.length]), [0, 0], 'file-system writes during export'); eq(page.errors, [], 'script errors');
     return keys.length + ' modules exported';
   });
-  await test('F10', 'RMI IDs come from “Risk mitigations individual”; texts not there are RMI-X with one error per line; Groups/Assigned checked', async () => {
-    const r = await page.evaluate(() => { const { M } = window.__rre.state(); const sh = M.wb.sheets.find((x) => x.name === 'Risk mitigations individual');
-      const master = new Map(sh.rows.slice(1).filter(Boolean).map((row) => [row[1], row[0]]));
-      const lines = M.risks.flatMap((r) => r.items).concat(M.groups.flatMap((g) => g.items)), unknown = lines.filter((o) => !master.has(o.text));
-      return { idsOk: lines.filter((o) => master.has(o.text)).every((o) => o.rmi.id === master.get(o.text) && o.rmi.base), xOk: unknown.every((o) => o.rmi.id === 'RMI-X' && !o.rmi.base),
-        nErr: M.issues.filter((i) => i.code === 'C_RMI_UNKNOWN').length, nUnknown: unknown.length, groupsErr: M.issues.filter((i) => i.code === 'C_RMI_GROUPS').map((i) => i.refs[0].id).sort(), unused: M.issues.filter((i) => i.code === 'W_UNUSED_RMI').map((i) => i.refs[0].id) }; });
-    eq([r.idsOk, r.xOk, r.nErr], [true, true, r.nUnknown], 'IDs from the sheet / RMI-X / one error per unknown line'); assert(r.nUnknown > 0, 'sample should contain unknown lines');
-    assert(r.groupsErr.length >= 2 && r.unused.length === 1, 'Groups/Assigned errors ' + r.groupsErr + ' / unused ' + r.unused);
+  await test('F10', 'Mitigation items: texts only from “Risk mitigations individual”, links only by RMI ID; unknown IDs reported once per use; text columns not read', async () => {
+    const r = await page.evaluate(() => { const { M } = window.__rre.state(); const sheet = (n) => M.wb.sheets.find((x) => x.name === n);
+      const master = new Map(sheet('Risk mitigations individual').rows.slice(1).filter(Boolean).map((row) => [row[0], row[1]]));
+      const idCol = (sh) => { for (let i = 0; i < 10; i++) { const c = (sh.rows[i] || []).indexOf('RMI ID'); if (c >= 0) return c; } return -1; };
+      const ra = sheet('Risik analysis Alpha'), rg = sheet('Risk Mitigation Groups'), rc = idCol(ra), gc = idCol(rg);
+      /* independent reading of the RMI ID cells: lines that are exactly a master ID */
+      const lines = (sh, c, row) => [...new Set(String(sh.rows[row][c] || '').split('\n').map((x) => x.trim()).filter((x) => master.has(x)))];
+      const exact = (items) => [...new Set(items.filter((o) => o.rmi.base && o.raw === o.rmi.id).map((o) => o.rmi.id))];
+      const refs = M.risks.flatMap((k) => k.items).concat(M.groups.flatMap((g) => g.items));
+      return { cols: rc >= 0 && gc >= 0, riskOk: M.risks.every((k) => JSON.stringify(exact(k.items)) === JSON.stringify(lines(ra, rc, k.row))), groupOk: M.groups.every((g) => JSON.stringify(exact(g.items)) === JSON.stringify(lines(rg, gc, g.row))),
+        textOk: refs.filter((o) => o.rmi.base).every((o) => o.rmi.text === master.get(o.rmi.id) && o.text === o.rmi.text), unknown: refs.filter((o) => !o.rmi.base).length,
+        nErr: M.issues.filter((i) => i.code === 'C_RMI_UNKNOWN').length, hint: M.issues.some((i) => i.code === 'C_RMI_UNKNOWN' && /^This is the text of RMI-\d+/.test(i.hint || '')),
+        typed: M.issues.filter((i) => i.code === 'W_NOT_FORMULA').map((i) => i.refs[0].type).sort() }; });
+    eq([r.cols, r.riskOk, r.groupOk, r.textOk, r.nErr], [true, true, true, true, r.unknown], 'RMI ID columns / risk links / group links / texts from the master list / one error per unknown ID');
+    assert(r.unknown >= 3 && r.hint, 'sample should contain unknown IDs (incl. an item text instead of its ID)'); eq(r.typed, ['group', 'risk'], 'text cells typed instead of a formula');
   });
-  await test('F9', 'Items are linked to groups only by identical Content text; every item without one is a consistency error; [ID] tags are ignored', async () => {
-    const r = await page.evaluate(() => { const { M } = window.__rre.state(); const content = new Set(M.groups.flatMap((g) => g.items.map((i) => i.text)));
-      const occ = M.risks.flatMap((r) => r.items), miss = occ.filter((o) => !content.has(o.text)), errs = M.issues.filter((i) => i.code === 'C_NOT_IN_GROUP');
-      const wrong = occ.filter((o) => o.groups.some((g) => !g.items.some((i) => i.text === o.text))).length;
-      return { n: errs.length, cats: [...new Set(errs.map((i) => i.cat))], miss: miss.length, wrong, tagged: occ.filter((o) => /\[\w+\]?\s*$/.test(o.text)).length, tagCodes: M.issues.filter((i) => /TAG|UNASSIGNED/.test(i.code)).length }; });
-    eq([r.cats, r.n, r.wrong, r.tagged, r.tagCodes], [['consistency'], r.miss, 0, 0, 0], 'error category / one error per unmatched line / wrong links / tags left in text / tag checks'); assert(r.n > 0, 'sample should contain unmatched lines');
+  await test('F9', 'Item → group only by the groups’ RMI ID column; used but in no group = consistency error; linked to no risk = warning (also when a group lists it)', async () => {
+    const r = await page.evaluate(() => { const { M } = window.__rre.state();
+      const wrong = M.rmis.filter((m) => JSON.stringify(m.groups.map((g) => g.id).sort()) !== JSON.stringify(M.groups.filter((g) => g.items.some((i) => i.rmi === m)).map((g) => g.id).sort())).length;
+      const ni = M.issues.filter((i) => i.code === 'C_NOT_IN_GROUP'), un = M.issues.filter((i) => i.code === 'W_UNUSED_RMI');
+      return { wrong, occWrong: M.risks.flatMap((k) => k.items).filter((o) => o.groups !== o.rmi.groups).length,
+        ni: ni.map((i) => i.refs[0].id).sort(), expNi: M.rmis.filter((m) => m.base && m.risks.length && !m.groups.length).map((m) => m.id).sort(), niCats: [...new Set(ni.map((i) => i.cat))],
+        un: un.map((i) => i.refs[0].id).sort(), expUn: M.rmis.filter((m) => m.base && !m.risks.length).map((m) => m.id).sort(), unCats: [...new Set(un.map((i) => i.cat))],
+        unInGroup: un.filter((i) => i.refs.some((o) => o.type === 'group')).length, groupBadge: M.groups.some((g) => g.issues.some((i) => i.code === 'W_UNUSED_RMI')) }; });
+    eq([r.wrong, r.occWrong, r.ni, r.niCats, r.un, r.unCats], [0, 0, r.expNi, ['consistency'], r.expUn, ['warning']], 'item-group links / C_NOT_IN_GROUP / W_UNUSED_RMI');
+    assert(r.expNi.length > 0 && r.unInGroup > 0 && r.expUn.length > r.unInGroup && r.groupBadge, 'sample should contain: items in no group, unused items listed by a group and unused items in no group');
+  });
+  await test('F11', 'RMI ID cells: mis-typed references are format errors read as the intended ID; duplicates reported; formulas without results in unread columns ignored', async () => {
+    const r = await page.evaluate(() => { const { M } = window.__rre.state(); const fmt = M.issues.filter((i) => i.code === 'F_RMI_REF'), rmiOf = (i) => i.refs.find((o) => o.type === 'rmi');
+      return { kinds: [/not written exactly/, /only the RMI ID belongs/, /^Risk .*RMI IDs on one line/, /^Group .*RMI IDs on one line/].map((rx) => fmt.some((i) => rx.test(i.msg))),
+        readAs: fmt.filter((i) => /read as/.test(i.msg)).every((i) => { const m = rmiOf(i); return m && m.base && i.msg.endsWith('(read as ' + m.id + ').'); }),
+        split: fmt.filter((i) => /on one line/.test(i.msg)).every((i) => i.excerpt.split(/\s*[,;]\s*/).every((id) => i.refs[0].items.some((o) => o.rmi.id === id))),
+        dup: M.issues.filter((i) => i.code === 'W_DUP_LINE').map((i) => i.refs[0].items.filter((o) => o.rmi === i.refs[1]).length),
+        uncached: M.wb.sheets.reduce((a, x) => a + x.uncached.length, 0), uncachedIssue: M.issues.filter((i) => i.code === 'W_UNCACHED').length }; });
+    eq([r.kinds, r.readAs, r.split, r.dup, r.uncachedIssue], [[true, true, true, true], true, true, [1], 0], 'kinds of format error / read as / IDs on one line all read / duplicate kept once / W_UNCACHED');
+    assert(r.uncached > 0, 'the sample formulas should have no stored results');
   });
   await test('F6', 'Invalid files give a clear message and leave the tool usable', async () => {
     for (const [f, rx] of [['not-a-workbook.xlsx', /not an Excel/], ['encrypted.xlsx', /encrypted|legacy/], ['other-workbook.xlsx', /no risk analysis sheet/]]) { await page.goto(FILE_T); await page.setInputFiles('#file-input', fx(f)); await page.waitForSelector('.toast.error', { timeout: 5000 }); assert(rx.test(await page.locator('.toast.error').first().textContent()), 'message for ' + f); }
@@ -224,7 +246,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   });
   await test('H1', 'History: change logs are listed newest first with the changes of each object', async () => {
     await nav(page, 'history'); await page.waitForSelector('.hlog'); eq(await page.locator('.hlog').count(), 2, 'number of logs');
-    const txt = await page.locator('.hlog').first().textContent(); for (const s of ['Test Author', 'R.API.1', 'R.GW.2', 'frequently', 'rarely', 'A brand new mitigation line']) assert(txt.includes(s), 'newest log lacks “' + s + '”');
+    const txt = await page.locator('.hlog').first().textContent(); for (const s of ['Test Author', 'R.API.1', 'R.GW.2', 'frequently', 'rarely', '+ RMI-019 — Create encrypted database backups', '− RMI-031']) assert(txt.includes(s), 'newest log lacks “' + s + '”');
   });
   await test('H2', 'History: comparing two baselines shows the same changes; latest baseline vs current workbook shows none', async () => {
     await page.click('.seg button:has-text("Compare baselines")'); await page.waitForSelector('#cmp-info'); assert((await page.textContent('#cmp-info')).startsWith('0 changed objects'), 'latest baseline vs current workbook');
@@ -249,6 +271,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   let step = 0, prevFile = null;
   const snapWb = async () => { const f = path.join(edDir, (++step) + '.xlsx'); fs.writeFileSync(f, Buffer.from(await T('get', 'workbook.xlsx'), 'base64')); return f; };
   const pyDiff = (a, b) => JSON.parse(execFileSync('python3', [path.join(__dirname, 'xlsx_diff.py'), a, b]).toString());
+  const calcOnLoad = (f) => execFileSync('python3', ['-c', 'import sys,zipfile\nprint(\'fullCalcOnLoad="1"\' in zipfile.ZipFile(sys.argv[1]).read("xl/workbook.xml").decode())', f]).toString().trim() === 'True';
   const openObjBy = async (q) => { await page.keyboard.press('Escape'); await page.fill('#global-search', q); await page.click('.search-i >> nth=0'); await page.waitForSelector('.drawer'); };
   const save = async () => { await page.click('#form-save'); await page.waitForSelector('#edit-confirm', { timeout: 5000 }); await page.click('#edit-confirm'); await page.waitForSelector('.toast', { timeout: 8000 }); await page.waitForTimeout(400); const t = await page.locator('.toast').last().textContent(); await page.evaluate(() => document.querySelectorAll('.toast').forEach((x) => x.remove())); return t; };
   const modelOf = () => page.evaluate(() => { const { M } = window.__rre.state(); return M; }).catch(() => null);
@@ -259,29 +282,40 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     const pv = await page.locator('.preview tbody tr').first().textContent(); assert(pv.includes('R.DB.2') && pv.includes('Risk description'), 'preview row lacks object/field: ' + pv);
     await page.click('.dialog-actions .btn:has-text("Cancel")'); await page.waitForTimeout(200); await page.click('#edit-btn'); await page.fill('#f-description', 'Edited description of R.DB.2'); const msg = await save();
     assert(/^Saved/.test(msg), msg); const cur = await snapWb(), d = pyDiff(prevFile, cur); prevFile = cur;
-    eq(d.diff.map((x) => [x[0], x[3]]), [['Risik analysis Alpha', 'Edited description of R.DB.2']], 'changed cells');
+    eq(d.diff.map((x) => [x[0], x[3]]), [['Risik analysis Alpha', 'Edited description of R.DB.2']], 'changed cells'); eq(calcOnLoad(cur), false, 'recalculation requested without formulas involved');
     const logs = Object.keys(await T('tree')).filter((k) => k.startsWith('change-logs/')).sort(), last = JSON.parse(await T('read', logs[logs.length - 1]));
     eq([last.schema, last.closed, last.entries.length, last.entries[0].author, last.entries[0].changes.map((c) => c.id)], [2, null, 1, 'Editor', ['R.DB.2']], 'open log');
   });
-  await test('E2', 'Rename a mitigation item: every identical line (risk analysis + group Content) changes, nothing else', async () => {
+  await test('E2', 'Rename a mitigation item: only its cell in “Risk mitigations individual” changes; links stay; Excel recalculates the text formulas on opening', async () => {
     const pick = await page.evaluate(() => { const { M } = window.__rre.state(); const m = M.rmis.filter((x) => x.base && x.occ.length >= 2 && x.listed.length).sort((a, b) => b.occ.length - a.occ.length)[0];
-      return { id: m.id, old: m.text, cells: new Set(m.occ.map((o) => 'r' + o.risk.row).concat(m.listed.map((i) => 'g' + i.group.row))).size + 1, occ: m.occ.length }; });
+      return { id: m.id, old: m.text, risks: m.risks.map((x) => x.id), groups: m.groups.map((g) => g.id) }; });
     await openObjBy(pick.id); await page.click('#edit-btn'); await page.fill('#f-text', pick.old + ' (renamed)'); const m2 = await save(); assert(/^Saved/.test(m2), m2);
     const cur = await snapWb(), d = pyDiff(prevFile, cur); prevFile = cur;
-    eq(d.diff.length, pick.cells, 'number of changed cells'); assert(d.diff.every((x) => String(x[3]).includes(pick.old + ' (renamed)') && String(x[3]).replace(pick.old + ' (renamed)', pick.old) === String(x[2])), 'a changed cell differs in more than the item text');
-    const r = await page.evaluate((t) => { const { M } = window.__rre.state(); const m = M.rmis.find((x) => x.text === t); return m ? [m.id, m.occ.length, m.groups.length > 0] : null; }, pick.old + ' (renamed)'); eq(r, [pick.id, pick.occ, true], 'renamed item: same RMI ID / uses / still linked to its group');
+    eq(d.diff.map((x) => [x[0], x[2], x[3]]), [['Risk mitigations individual', pick.old, pick.old + ' (renamed)']], 'changed cells'); eq(calcOnLoad(cur), true, 'fullCalcOnLoad set');
+    const r = await page.evaluate((id) => { const { M } = window.__rre.state(); const m = M.by.rmi.get(id); return [m.text, m.risks.map((x) => x.id), m.groups.map((g) => g.id)]; }, pick.id);
+    eq(r, [pick.old + ' (renamed)', pick.risks, pick.groups], 'renamed item: new text, same risks and groups');
   });
-  await test('E3', 'Add a mitigation item: a group is mandatory; the line is added to the risk and to the group Content', async () => {
+  await test('E3', 'Add a mitigation item: a group is mandatory; its RMI ID is appended to the risk and the group; a new item gets a master-list row (ID, text, formulas)', async () => {
+    const taken = await page.evaluate(() => window.__rre.state().M.by.rmi.get('RMI-019').text);
     await openObjBy('R.DB.2'); await page.click('#add-rmi-btn'); await page.fill('#f-text', 'Encrypt database volumes at rest'); await page.click('#form-save');
     assert(/required/.test(await page.textContent('.form-err')), 'saved without a group'); await page.selectOption('#f-group', 'RMG05'); await page.fill('#f-rmiId', 'RMI-001'); await page.click('#form-save');
-    assert(/already exists/.test(await page.textContent('.form-err')), 'accepted an existing RMI ID'); await page.fill('#f-rmiId', 'RMI-900'); await page.click('#form-save'); await page.click('#edit-confirm'); await page.waitForSelector('.toast'); await page.waitForTimeout(400);
-    const cur = await snapWb(), d = pyDiff(prevFile, cur); prevFile = cur; const two = d.diff.filter((x) => x[0] !== 'Risk mitigations individual'), ind = d.diff.filter((x) => x[0] === 'Risk mitigations individual');
-    eq(two.map((x) => x[0]).sort(), ['Risik analysis Alpha', 'Risk Mitigation Groups'], 'changed cells'); eq(ind.map((x) => x[3]), ['RMI-900', 'Encrypt database volumes at rest', 'RMG05', 'Si'], 'new row in Risk mitigations individual');
-    assert(two.every((x) => String(x[3]).endsWith('\n- Encrypt database volumes at rest') && String(x[3]).startsWith(String(x[2]))), 'line not appended at the end');
-    const r = await page.evaluate(() => { const { M } = window.__rre.state(); const m = M.rmis.find((x) => x.text === 'Encrypt database volumes at rest'); return [m.id, m.risks.map((x) => x.id), m.groups.map((g) => g.id), m.issues.length]; });
-    eq(r, ['RMI-900', ['R.DB.2'], ['RMG05'], 0], 'ID / risk / group / issues of the new item');
+    assert(/already exists/.test(await page.textContent('.form-err')), 'accepted an existing RMI ID'); await page.fill('#f-rmiId', 'RMI-900'); await page.fill('#f-text', taken); await page.click('#form-save');
+    assert(/already exists as RMI-019/.test(await page.textContent('.form-err')), 'accepted the text of an existing item');
+    await page.fill('#f-text', 'Encrypt database volumes at rest'); await page.click('#form-save'); await page.click('#edit-confirm'); await page.waitForSelector('.toast'); await page.waitForTimeout(400);
+    let cur = await snapWb(), d = pyDiff(prevFile, cur); prevFile = cur; const two = d.diff.filter((x) => x[0] !== 'Risk mitigations individual'), ind = d.diff.filter((x) => x[0] === 'Risk mitigations individual');
+    eq(two.map((x) => x[0]).sort(), ['Risik analysis Alpha', 'Risk Mitigation Groups'], 'changed cells'); assert(two.every((x) => String(x[3]) === String(x[2]) + '\nRMI-900'), 'RMI ID not appended as a new line: ' + JSON.stringify(two));
+    const nr = ind.length ? ind[0][1].replace(/[A-Z]+/, '') : '?';
+    eq(ind.slice(0, 2).map((x) => x[3]), ['RMI-900', 'Encrypt database volumes at rest'], 'new row in Risk mitigations individual');
+    assert(ind.length === 4 && String(ind[2][3]).startsWith('=') && String(ind[2][3]).includes('A' + nr) && String(ind[3][3]).includes('C' + nr), 'Groups / Assigned formulas not copied to row ' + nr + ': ' + JSON.stringify(ind.slice(2)));
+    let r = await page.evaluate(() => { const { M } = window.__rre.state(); const m = M.by.rmi.get('RMI-900'); return [m.text, m.risks.map((x) => x.id), m.groups.map((g) => g.id), m.issues.length]; });
+    eq(r, ['Encrypt database volumes at rest', ['R.DB.2'], ['RMG05'], 0], 'text / risk / group / issues of the new item');
+    /* existing item whose group already lists it: only the risk's RMI ID cell changes */
+    await page.click('#add-rmi-btn'); await page.selectOption('#f-existing', 'RMI-019'); await page.selectOption('#f-group', 'RMG05'); await page.click('#form-save'); await page.click('#edit-confirm'); await page.waitForSelector('.toast'); await page.waitForTimeout(400);
+    cur = await snapWb(); d = pyDiff(prevFile, cur); prevFile = cur;
+    eq(d.diff.map((x) => [x[0], String(x[3]).split('\n').slice(-1)[0]]), [['Risik analysis Alpha', 'RMI-019']], 'existing item: changed cells');
+    r = await page.evaluate(() => window.__rre.state().M.by.risk.get('R.DB.2').items.map((o) => o.rmi.id).slice(-2)); eq(r, ['RMI-900', 'RMI-019'], 'items of R.DB.2');
   });
-  await test('E4', 'Add a risk: appended after the last row, formatted like the row above, index computed', async () => {
+  await test('E4', 'Add a risk and a group: appended after the last row, formatted like the row above, index computed, text-column formula copied', async () => {
     await page.keyboard.press('Escape'); await nav(page, 'risks'); await page.click('#add-btn');
     await page.selectOption('#f-threat', 't:T.BSI.25'); await page.fill('#f-riskId', 'R.DB.9'); await page.fill('#f-description', 'Storage controller failure'); await page.fill('#f-component', 'Telemetry Database');
     await page.check('#f-core input[value="A"]'); await page.selectOption('#f-freq', 'medium'); await page.selectOption('#f-effect', 'considerable'); await page.selectOption('#f-category', 'mitigation'); await page.selectOption('#f-freqAfter', 'rarely'); await page.selectOption('#f-effectAfter', 'considerable');
@@ -290,6 +324,12 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     const exp = await page.evaluate(() => { const { M } = window.__rre.state(); const r = M.by.risk.get('R.DB.9'); return { row: r.row + 1, last: Math.max(...M.risks.filter((x) => x !== r).map((x) => x.row)) + 1, idx: [r.index, r.residual], thr: r.threat.id }; });
     eq([rows, exp.row, exp.idx, exp.thr], [[String(exp.last + 1)], exp.last + 1, [15, 10], 'T.BSI.25'], 'new row / computed indices / threat');
     assert(Object.values(d.styles).length > 5 && Object.values(d.styles).every(Boolean), 'new cells not formatted like the row above');
+    assert(d.diff.some((x) => /^P\d+$/.test(x[1]) && /^=_xlfn\.TEXTJOIN/.test(String(x[3])) && String(x[3]).includes('O' + exp.row)), '“Risk treatment option” formula not copied to the new row');
+    /* a new group: appended after the last group, its Content gets the formula of the row above */
+    await page.keyboard.press('Escape'); await nav(page, 'mitigations'); await page.click('#add-btn'); await page.fill('#f-id', 'RMG10'); await page.fill('#f-name', 'Supplier management'); assert(/^Saved/.test(await save()), 'group not saved');
+    const cur2 = await snapWb(), d2 = pyDiff(prevFile, cur2); prevFile = cur2;
+    const k = d2.diff.find((x) => /^K\d+$/.test(x[1])), gr = d2.diff.find((x) => x[3] === 'RMG10');
+    assert(gr && k && k[1].slice(1) === gr[1].slice(1) && /^=_xlfn\.TEXTJOIN/.test(String(k[3])) && String(k[3]).includes('J' + gr[1].slice(1)), 'Content formula not copied to the new group row: ' + JSON.stringify(d2.diff));
   });
   await test('E5', 'Rename a component and an assumption title: propagated to every risk and assumption that uses them', async () => {
     await page.keyboard.press('Escape'); await nav(page, 'components'); await page.click('.comp-card:has-text("Update Server")'); await page.waitForSelector('.drawer'); await page.click('#edit-btn'); await page.fill('#f-name', 'Update Service'); assert(/^Saved/.test(await save()), 'component not saved');
@@ -307,7 +347,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   });
   await test('E7', 'Baseline saves the Excel version and starts a new log; earlier logs are not modified', async () => {
     const t0 = await T('tree'), logs0 = Object.keys(t0).filter((k) => k.startsWith('change-logs/')).sort(), cur = JSON.parse(await T('read', logs0[logs0.length - 1]));
-    eq(cur.entries.length, 6, 'saves in the current log');
+    eq(cur.entries.length, 8, 'saves in the current log');
     await T('put', 'workbook.xlsx', fs.readFileSync(prevFile).toString('base64')); // back to the edited version (E6 replaced it)
     await page.keyboard.press('Escape'); await page.click('#reload-btn'); await page.waitForTimeout(700); await page.click('#write-btn'); await page.click('#write-baseline'); await page.waitForTimeout(1500);
     const t1 = await T('tree'), logs1 = Object.keys(t1).filter((k) => k.startsWith('change-logs/')).sort(), neu = JSON.parse(await T('read', logs1[logs1.length - 1]));

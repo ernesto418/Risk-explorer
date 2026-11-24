@@ -11,9 +11,10 @@ with tempfile.TemporaryDirectory() as t:
     subprocess.run(['soffice', '--headless', '--convert-to', 'xlsx:Calc MS Excel 2007 XML', '--outdir', t, os.path.join(D, 'sample.xlsx')], check=True, capture_output=True)
     shutil.copy(os.path.join(t, 'sample.xlsx'), os.path.join(D, 'libreoffice-copy.xlsx'))
 zin = zipfile.ZipFile(os.path.join(D, 'libreoffice-copy.xlsx')); zout = zipfile.ZipFile(os.path.join(D, 'excel-style.xlsx'), 'w', zipfile.ZIP_DEFLATED)
-def rich(m):
-    txt = m.group(2); cut = txt.find(' ', len(txt) // 2)
-    if '[RMG' not in txt or cut < 0: return m.group(0)
+def rich(m):   # RMI ID cells (split at a line break) and long texts (split at a space) become two rich-text runs
+    txt = m.group(2)
+    cut = txt.find('_x000D_') if 'RMI-' in txt and ' ' not in txt else (txt.find(' ', len(txt) // 2) if len(txt) > 60 else -1)
+    if cut <= 0: return m.group(0)
     return '<si><r><rPr><b/><sz val="11"/></rPr><t xml:space="preserve">%s</t></r><r><t xml:space="preserve">%s</t></r><rPh sb="0" eb="1"><t>IGNORED</t></rPh><phoneticPr fontId="1"/></si>' % (txt[:cut], txt[cut:])
 for item in zin.infolist():
     data = zin.read(item.filename)
@@ -23,12 +24,18 @@ for item in zin.infolist():
 zout.close()
 def sample(): return load_workbook(os.path.join(D, 'sample.xlsx'))
 wb = sample(); ws = wb['Risik analysis Alpha']          # two risks edited: used by the change-log tests
-ws['J8'] = 'rarely'; ws['O8'] = ws['O8'].value.rsplit('\n', 1)[0] + '\n- A brand new mitigation line [RMG02]'; ws['F9'] = 'Changed description'
+ws['J8'] = 'rarely'; ws['O8'] = ws['O8'].value.rsplit('\n', 1)[0] + '\nRMI-019'; ws['F9'] = 'Changed description'   # O = RMI ID
 wb.save(os.path.join(D, 'modified.xlsx'))
+def strip_calc_on_load(path):   # the edit tests run on modified.xlsx: they check that the tool sets fullCalcOnLoad itself
+    zi = zipfile.ZipFile(path); items = [(i, zi.read(i.filename)) for i in zi.infolist()]; zi.close()
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zo:
+        for i, data in items: zo.writestr(i, data.replace(b' fullCalcOnLoad="1"', b'') if i.filename == 'xl/workbook.xml' else data)
+strip_calc_on_load(os.path.join(D, 'modified.xlsx'))
 wb = sample(); ws = wb['Risik analysis Alpha']          # markup in cells must be shown as text, never executed
 ws['F7'] = '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script>'
-ws['O7'] = ws['O7'].value + '\n- <svg onload=window.__xss=3></svg> [RMG02]'; ws['G7'] = '"><iframe src="javascript:window.__xss=4"></iframe>'
+ws['O7'] = ws['O7'].value + '\n<svg onload=window.__xss=3></svg>'; ws['G7'] = '"><iframe src="javascript:window.__xss=4"></iframe>'
 wb['Risk Mitigation Groups']['I2'] = '<b onmouseover=window.__xss=5>Identity</b>'
+wb['Risk mitigations individual']['B3'] = '<img src=x onerror="window.__xss=6"> Apply role based access control'
 wb.save(os.path.join(D, 'xss.xlsx'))
 open(os.path.join(D, 'not-a-workbook.xlsx'), 'wb').write(b'this is not a zip archive ' * 8)
 open(os.path.join(D, 'encrypted.xlsx'), 'wb').write(bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) + b'\0' * 600)

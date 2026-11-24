@@ -127,8 +127,10 @@ function parseRef(ref) {
 }
 
 /**
- * Reads a workbook. Returns { sheets: [{ name, hidden, rows: any[][], merges, formulasWithoutValue }] }.
- * rows[r][c] holds strings, numbers, booleans or undefined. Merged ranges are filled with their top-left value.
+ * Reads a workbook. Returns { sheets: [{ name, hidden, rows: any[][], merges, formulas, uncached, formulasWithoutValue }] }.
+ * rows[r][c] holds strings, numbers, booleans or undefined (cached results for formula cells). Merged ranges are filled
+ * with their top-left value. `formulas` = Set of "r:c" of every cell with a formula; `uncached` = [r, c] of formula
+ * cells without a stored result.
  */
 async function readWorkbook(buf) {
   const zip = openZip(buf);
@@ -156,7 +158,7 @@ async function readWorkbook(buf) {
     let rid = null;
     for (const a of el.attributes) if (a.localName === 'id' && a.name !== 'sheetId') rid = a.value;
     const rel = rels.get(rid);
-    const sheet = { path: rel ? rel.target : null, name: el.getAttribute('name') || '', hidden: (el.getAttribute('state') || 'visible') !== 'visible', rows: [], merges: [], formulasWithoutValue: 0 };
+    const sheet = { path: rel ? rel.target : null, name: el.getAttribute('name') || '', hidden: (el.getAttribute('state') || 'visible') !== 'visible', rows: [], merges: [], formulas: new Set(), uncached: [], formulasWithoutValue: 0 };
     sheets.push(sheet);
     if (!rel || !/worksheet$/.test(rel.type)) { sheet.kind = 'other'; continue; }
     const doc = await zip.xml(rel.target);
@@ -175,8 +177,12 @@ async function readWorkbook(buf) {
         let vEl = null, isEl = null, fEl = null;
         for (const k of c.children) { if (k.localName === 'v') vEl = k; else if (k.localName === 'is') isEl = k; else if (k.localName === 'f') fEl = k; }
         let val;
+        if (fEl) sheet.formulas.add(rIdx + ':' + cIdx);
         if (t === 'inlineStr') val = isEl ? siText(isEl) : '';
-        else if (!vEl) { if (fEl) sheet.formulasWithoutValue++; continue; }
+        else if (!vEl || (fEl && vEl.textContent === '' && (!t || t === 'n'))) { // no result stored (an empty numeric <v/> as written by openpyxl)
+          if (fEl) { sheet.formulasWithoutValue++; sheet.uncached.push([rIdx, cIdx]); }
+          continue;
+        }
         else {
           const raw = vEl.textContent;
           if (t === 's') val = sst[parseInt(raw, 10)] ?? '';
