@@ -21,7 +21,7 @@ function groupCard(g) {
 }
 VIEWS.mitigations = function () {
   const ui = state.ui.mit;
-  const body = h('div'), controls = h('div.controls'), nrSlot = h('div.ctl');
+  const body = h('div'), controls = h('div.controls'), nrSlot = h('div.ctl.nr-slot');
   const unassigned = M.rmis.filter((m) => m.occ.length && !m.groups.length);
   /* “Hide not relevant”, separately per tab: hides groups / items whose risks are all not relevant (unused ones stay) */
   const draw = () => {
@@ -57,9 +57,10 @@ VIEWS.mitigations = function () {
     }
   };
   const drawControls = () => {
-    fill(controls, segmented([{ value: 'groups', label: 'Groups', icon: 'group' }, { value: 'items', label: 'All items', icon: 'rmi' }], ui.tab, (v) => { ui.tab = v; drawControls(); draw(); }, 'View'), nrSlot);
+    fill(controls, segmented([{ value: 'groups', label: 'Groups', icon: 'group' }, { value: 'items', label: 'All items', icon: 'rmi' }], ui.tab, (v) => { ui.tab = v; drawControls(); draw(); }, 'View'));
     if (ui.tab === 'items') controls.append(searchBox('Search mitigation items…', ui.q, (v) => { ui.q = v; draw(); }),
       segmented([{ value: 'all', label: 'All' }, { value: 'unassigned', label: 'Without group' }, { value: 'shared', label: 'Used by several risks' }, { value: 'issues', label: 'With errors' }, { value: 'orphan', label: 'Not linked to any risk' }], ui.only, (v) => { ui.only = v; drawControls(); draw(); }, 'Filter'));
+    controls.append(nrSlot); // always last: aligned to the right
   };
   drawControls(); draw();
   return h('div.view', viewHead('Mitigations', 'Mitigation items (RMI) and their texts come from “Risk mitigations individual”. Risks and Risk Mitigation Groups (RMG) refer to them by RMI ID in their “RMI ID” column (one ID per line).'), controls, body);
@@ -334,10 +335,11 @@ VIEWS.connections = function () {
   };
   const drawControls = () => {
     const nrR = M.risks.filter((r) => r.notRelevant).length, nrT = M.threats.filter((t) => t.risks.length && onlyNotRelevant(t)).length;
-    fill(controls, nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); }), h('div.ctl', h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
+    fill(controls, h('div.ctl', h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
       type: 'button', 'aria-pressed': String(ui.cols.includes(t)),
       onclick: () => { if (ui.cols.includes(t)) { if (ui.cols.length > 2) ui.cols = ui.cols.filter((x) => x !== t); } else ui.cols = ui.cols.concat(t); drawControls(); draw(); },
-    }, icon(TYPES[t].icon, 13), TYPES[t].plural)))));
+    }, icon(TYPES[t].icon, 13), TYPES[t].plural)))),
+      h('div.ctl.nr-slot', nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); })));
     const removeObj = (o) => { ui.focus = ui.focus.map((term) => term.filter((x) => x !== o)).filter((term) => term.length); drawControls(); draw(); };
     if (ui.focus.length) controls.append(h('div.ctl.focusbar', h('span.ctl-l', 'Focused on'),
       ui.focus.map((term, ti) => [ti ? h('span.focus-op', { tip: 'Every shown path satisfies both sides' }, 'and') : null,

@@ -208,7 +208,8 @@ Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body o
    650 ms) opens details and never changes the focus (`clickTimer`, `lastClick`, `flowUndo`).
 9. **history** (§12). 10. **issues** – findings grouped by check / object / sheet & row.
 
-**Hide not relevant** (`nrToggle`, state `state.ui.<view>.hideNR…`, on at start, kept while the tab is open): one
+**Hide not relevant** (`nrToggle` in a `.nr-slot`, always the last control of the view, aligned right; state
+`state.ui.<view>.hideNR…`, on at start, kept while the tab is open): one
 independent toggle in Risks (`risks.hideNR`), Threats (`threats.hideNR`, list only), Mitigations (`mit.hideNRg` groups
 tab, `mit.hideNRi` items tab) and Connections (`flow.hideNR`: hides not-relevant risks and threats with only such risks;
 every other column keeps its objects). Hidden = `onlyNotRelevant`; objects without risks are never hidden. The drawer’s

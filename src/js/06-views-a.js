@@ -272,7 +272,7 @@ function riskCard(r) {
 }
 VIEWS.risks = function () {
   const ui = state.ui.risks;
-  const controls = h('div.controls'), list = h('div.list'), info = h('div.list-info'), nrSlot = h('div.ctl');
+  const controls = h('div.controls'), list = h('div.list'), info = h('div.list-info'), nrSlot = h('div.ctl.nr-slot');
   const draw = () => {
     const matching = applyRiskFilter(M.risks, ui.f), nrN = ui.hideNR ? matching.filter((r) => r.notRelevant).length : 0;
     const risks = ui.hideNR ? matching.filter((r) => !r.notRelevant) : matching;
@@ -301,10 +301,10 @@ VIEWS.risks = function () {
   const drawControls = () => {
     fill(controls, 
       searchBox('Search risks…', ui.f.q, (v) => { ui.f.q = v; draw(); }),
-      riskFilterControls(ui.f, () => { drawControls(); draw(); }, { levels: true }), nrSlot,
+      riskFilterControls(ui.f, () => { drawControls(); draw(); }, { levels: true }),
       h('div.ctl.grow'),
       h('div.ctl', h('span.ctl-l', 'Group by'), segmented([{ value: 'threat', label: 'Threat' }, { value: 'component', label: 'Component' }, { value: 'category', label: 'Treatment' }, { value: 'none', label: 'None' }], ui.group, (v) => { ui.group = v; drawControls(); draw(); }, 'Group by')),
-      selectBox('Sort', [{ value: 'index', label: 'Index before ↓' }, { value: 'after', label: 'Index after ↓' }, { value: 'reduction', label: 'Reduction ↓' }, { value: 'id', label: 'Risk ID' }], ui.sort, (v) => { ui.sort = v; draw(); }, true));
+      selectBox('Sort', [{ value: 'index', label: 'Index before ↓' }, { value: 'after', label: 'Index after ↓' }, { value: 'reduction', label: 'Reduction ↓' }, { value: 'id', label: 'Risk ID' }], ui.sort, (v) => { ui.sort = v; draw(); }, true), nrSlot);
   };
   drawControls(); draw();
   return h('div.view', viewHead('Risks', 'Every row of the risk analysis as an object. Expand a card for the full assessment, context and treatment.', info), controls, list);
@@ -332,7 +332,7 @@ VIEWS.threats = function () {
   const usedBox = h('div'), controls = h('div.controls');
   const drawUsed = () => {
     const shown = ui.hideNR ? used.filter((t) => !onlyNotRelevant(t)) : used, nrN = used.length - shown.length;
-    fill(controls, nrToggle(ui, 'hideNR', plural(nrN, 'threat') + ' with only not-relevant risks hidden', drawUsed));
+    fill(controls, h('div.ctl.nr-slot', nrToggle(ui, 'hideNR', plural(nrN, 'threat') + ' with only not-relevant risks hidden', drawUsed)));
     fill(usedBox, h('h2.list-title', 'Threats with risks ', h('span.count', shown.length)), h('div.list', shown.map(card)));
   };
   drawUsed();
