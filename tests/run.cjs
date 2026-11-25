@@ -69,6 +69,16 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     assert(!/unsafe-inline|unsafe-eval|https?:/.test(csp), 'CSP allows inline/eval/remote sources'); assert(!/<script[^>]+src=|<link[^>]+href="(?!data:)/.test(html), 'external resource referenced');
   });
 
+  await test('S6', 'Vendored code: every file in src/vendor is registered with version, license and SHA-256', () => {
+    const vdir = path.join(ROOT, 'src', 'vendor'); if (!fs.existsSync(vdir)) return 'no vendored code';
+    const files = fs.readdirSync(vdir).filter((f) => /\.(js|css)$/.test(f)), reg = fs.readFileSync(path.join(vdir, 'README.md'), 'utf8');
+    for (const f of files) {
+      const row = reg.split('\n').find((l) => l.startsWith('| ' + f + ' |')); assert(row, f + ' is not listed in src/vendor/README.md');
+      const cells = row.split('|').map((x) => x.trim()); assert(cells.slice(2, 6).every((x) => x && x !== '—'), f + ': library, version, source and license are required');
+      eq(cells[6], sha(fs.readFileSync(path.join(vdir, f))), f + ' SHA-256 in the registry');
+    }
+    return files.length + ' vendored file(s)';
+  });
   const browser = await chromium.launch();
   const server = http.createServer((q, r) => { r.setHeader('content-type', 'text/html; charset=utf-8'); r.end(fs.readFileSync(TEST)); });
   await new Promise((res) => server.listen(0, '127.0.0.1', res));

@@ -9,8 +9,10 @@ mode edits — a BSI 200-3 cybersecurity risk analysis kept in an Excel workbook
 3. Use the recipes in §18 for common changes.
 
 ## Hard rules (do not break)
-- **No network, no libraries, no CDN, no web fonts.** Everything stays inline in one HTML file; the CSP must stay
-  `default-src 'none'` with hash-pinned script/style (ARCHITECTURE §3, §14).
+- **No network at runtime, no CDN.** Everything stays inline in one HTML file that works 100 % offline; the CSP must
+  stay `default-src 'none'` with hash-pinned script/style (ARCHITECTURE §3, §14).
+- **Libraries / external code are allowed only when vendored**: browser build stored in `src/vendor/`, exact version,
+  license and SHA-256 recorded in `src/vendor/README.md`, inlined by `build.mjs` (ARCHITECTURE recipe 18.5).
 - **Nothing is modified by mistake.** Disk writes only through `safeWrite` / `safeAppendLog` / `writeWorkbookFile`
   (which call `rawWrite`) in `src/js/07w-write.js`. Never add another write path, delete API or overwrite of existing
   baselines/logs. Workbook edits must go through the `ChangeSet` pipeline in `07z-edit.js` (preview → verify → write).

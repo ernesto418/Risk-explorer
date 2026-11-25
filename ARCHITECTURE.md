@@ -42,11 +42,13 @@ change needs. Sections are self-contained; cross-references are given as `§n`.
 | Workbook does not open / wrong values | §5, §4 |
 | Anything touching disk, network or HTML injection | §14 first, then §10 |
 | Build, CSP, icon, single-file output | §3 |
+| Use a third-party library / external code | §1, §3, §14, recipe 18.5 |
 
 ## 1. Goals and hard constraints
 
-- **Local only.** No network at runtime, no CDN, no web fonts, no third-party libraries. Enforced by the CSP (§3) and
-  test S1/S3.
+- **Local only.** No network at runtime, no CDN, no web fonts loaded from URLs. Enforced by the CSP (§3) and tests
+  S1/S3. **Third-party libraries and external code are allowed** if they are vendored in `src/vendor/` and inlined into
+  the built HTML, so it keeps working 100 % offline (recipe 18.5). The current code uses none (see D2).
 - **Single HTML file** for users (`dist/risk-register-explorer.html`); sources stay modular in `src/`.
 - **Excel stays the database.** The app interprets it; it does not replace it.
 - **Nothing is modified by mistake.** Read-only by default; every disk write goes through one guarded function family
@@ -61,6 +63,7 @@ change needs. Sections are self-contained; cross-references are given as `§n`.
 build.mjs                  concatenates src/ into dist/ (no dependencies)
 src/index.template.html    page skeleton + CSP with hash placeholders
 src/styles.css             all styles (light/dark via CSS variables)
+src/vendor/                optional third-party code (*.js / *.css), inlined before the app; registry in its README.md
 src/js/01-util.js          DOM builder h(), icons, string/number helpers, fuzzy matching
 src/js/02-xlsx.js          minimal read-only XLSX/ZIP reader
 src/js/03-config.js        scales, bands, categories, BSI threat catalogue, issue catalogue
@@ -86,6 +89,9 @@ dist/                      built single file (committed for users)
   Consequences: all files share one scope (top-level `const`/`function` are visible to later files); **the file name
   decides load order** (`07-views-b` < `07w` < `07x` < `07y` < `07z` < `08`). Top-level code that runs immediately
   may only use what earlier files defined; functions may reference later files because they run after start-up.
+- Before the app, `build.mjs` inlines **`src/vendor/*.js`** (alphabetical, classic-script scope, each ends with `;`;
+  `</script` is escaped) and **`src/vendor/*.css`**. Vendor scripts run first and expose their API on `globalThis`;
+  the app (inside its IIFE) uses them as globals.
 - The CSP in the template is filled with the **SHA-256 of the exact script and style**:
   `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; img-src data:; connect-src 'none'; …`.
   Never add `unsafe-inline`, external URLs or `<link href>` other than `data:` (test S3).
@@ -128,7 +134,9 @@ Core domain rules (implemented in §6):
 - Returns `{ sheets: [{ name, path, hidden, rows[r][c], merges, formulasWithoutValue }], zip, wbPath }`.
   `zip.list()` / `zip.raw()` expose entries and compressed bytes so §11 can rebuild the archive byte-for-byte.
 - Detects OLE files (legacy `.xls`, password/label-encrypted) and non-ZIP input with explicit messages.
-- **Why own reader:** no libraries allowed (§1); the subset needed is small; full control over what is read.
+- **Why own reader:** written when libraries were not allowed; the subset needed is small and it gives byte-level
+  control needed by the editor (§11). Replacing it with a vendored library is possible but must keep `zip.list()` /
+  `zip.raw()` and the verification of §11.
 
 ## 6. Domain model and checks (`04-model.js`)
 
@@ -258,7 +266,8 @@ Exports respect the current filters/focus of the view.
 
 ## 14. Security and privacy
 
-- No network: CSP + no fetch/XHR/WebSocket in sources (test S1). No `innerHTML`, `eval`, `new Function` (S1); cell text
+- No network: CSP + no fetch/XHR/WebSocket in our sources (test S1). Vendored code is not scanned by S1 but cannot reach
+  the network because of the CSP; review it before adding (recipe 18.5). No `innerHTML`, `eval`, `new Function` (S1); cell text
   is rendered as text (test S5 with injection fixture).
 - Disk writes only via §10 guards; no delete API anywhere (`removeEntry` forbidden by S1).
 - `localStorage` holds only the theme preference.
@@ -278,8 +287,8 @@ Write tests use the browser’s private file system (OPFS) and shimmed pickers �
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | One self-contained HTML, no libraries, CSP `default-src 'none'` | Sensitive data; must run offline on locked-down machines; nothing can leak or be fetched. |
-| D2 | Own XLSX reader and writer | No dependencies allowed; needed subset is small; byte-level control needed for safe editing. |
+| D1 | One self-contained HTML, CSP `default-src 'none'`; libraries only inlined from `src/vendor/` | Sensitive data; must run offline on locked-down machines; nothing can leak or be fetched. Libraries allowed since Nov 2026 (owner decision) under the vendoring rules. |
+| D2 | Own XLSX reader and writer | Written when no dependencies were allowed; needed subset is small; byte-level control needed for safe editing. |
 | D3 | Normalise Excel into linked objects (RMI per line, components, derived links) | Excel keeps several items per cell and no relations; views and checks need a graph. |
 | D4 | Columns found by header text | Owner inserts/moves columns; positions are unstable. |
 | D5 | Identity of mitigation items = identical text; master list “Risk mitigations individual” gives IDs; unknown = RMI-X | Items have no ID in the treatment/Content cells; exact text is the only unambiguous key. Owner requirement. |
@@ -322,6 +331,13 @@ diffs the workbook with `xlsx_diff.py` and asserts exactly the expected cells ch
 **18.4 Add a view.** `VIEWS.<key> = function () { … return h('div.view', viewHead(…), …) }` in a views file →
 add it to `NAV` in `08-main.js` → optional `EXPORTS.<key>` and `ADDERS.<key>` → add it to the `VIEWS` list in
 `tests/run.cjs` (S4 tour) and a functional test.
+
+**18.5 Use a third-party library.** Check the license allows redistribution (MIT/BSD/Apache-2.0/ISC…) → download the
+**browser build** (UMD/IIFE that defines a global; no build step, no runtime imports) of an **exact version** → save it
+as `src/vendor/<name>-<version>.js` (and `.css`) with its license header → add a row (file, library, version, source,
+license, SHA-256) to `src/vendor/README.md` (test S6 fails otherwise) → use the global from app code → make sure it
+does not fetch anything, write to disk or inject workbook text as HTML → `node build.mjs && node tests/run.cjs` and
+check the size of `dist/`. Add a decision to §16 if it replaces own code.
 
 **After any change:** `node build.mjs && node tests/run.cjs`, keep `README.md`, this document and
 `tests/TEST_PLAN.md` in sync.
