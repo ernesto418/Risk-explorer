@@ -17,6 +17,7 @@ changed or deleted, and a log only ever gets entries appended.
 | S3 | network access at run time | CSP `default-src 'none'`, `connect-src 'none'`, script/style pinned by hash, no external resources |
 | S4 | writes in read-only mode | full tour of all views on the shipped file: 0 file writes/creates/deletes, 0 requests, 0 errors, only the theme in localStorage |
 | S5 | cell content executed as code | `<img onerror>`, `<script>`, `<svg onload>`, `<iframe>` in cells are shown as text |
+| S6 | unregistered third-party code | every file in `src/vendor/` is listed in its README with library, version, source, license and matching SHA-256 |
 | W1 | accidental activation | write mode off by default; needs a name; enabling writes nothing |
 | W2 | wrong files written | first baseline = exactly 1 `.xlsx` (byte-identical) + 1 JSON; workbook hash unchanged and never opened for writing |
 | W3 | duplicate baselines | unchanged workbook → nothing written |

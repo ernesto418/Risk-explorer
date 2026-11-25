@@ -1,6 +1,6 @@
 // Builds dist/risk-register-explorer.html: one self-contained file, no dependencies.
 // Usage: node build.mjs
-import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,9 +13,17 @@ const jsFiles = readdirSync(join(root, 'src/js')).filter((f) => f.endsWith('.js'
 // `node build.mjs --test` writes a second file with a small inspection hook for automated tests.
 const test = process.argv.includes('--test');
 const hook = test ? '\nwindow.__rre = { state: () => ({ M, state }), write, hist, safeWrite, EXPORTS, edit, snapshot, diffSnapshots };\n' : '';
-const script = '\n(() => {\n"use strict";\n' + jsFiles.map((f) => read('src/js/' + f)).join('\n') + hook + '\n})();\n';
-const style = '\n' + read('src/styles.css');
-if (/<\/script/i.test(script) || /<\/style/i.test(style)) throw new Error('Source must not contain closing script/style tags.');
+// Third-party code (optional): src/vendor/*.js and *.css are inlined BEFORE the app, so the output stays one offline file.
+// Vendor scripts run as classic scripts (UMD/IIFE builds put their API on globalThis); '</script' inside them is escaped.
+const vdir = join(root, 'src/vendor');
+const vendor = (ext) => (existsSync(vdir) ? readdirSync(vdir).filter((f) => f.endsWith(ext)).sort() : []);
+const vendorJs = vendor('.js').map((f) => '\n/* ---- vendor: ' + f + ' ---- */\n' + read('src/vendor/' + f).replace(/<\/(script)/gi, '<\\/$1') + '\n;').join('');
+const vendorCss = vendor('.css').map((f) => '\n/* ---- vendor: ' + f + ' ---- */\n' + read('src/vendor/' + f)).join('');
+if (/<\/style/i.test(vendorCss)) throw new Error('Vendor CSS must not contain closing style tags.');
+const app = '\n(() => {\n"use strict";\n' + jsFiles.map((f) => read('src/js/' + f)).join('\n') + hook + '\n})();\n';
+const own = '\n' + read('src/styles.css');
+if (/<\/script/i.test(app) || /<\/style/i.test(own)) throw new Error('Source must not contain closing script/style tags.');
+const script = vendorJs + app, style = vendorCss + own;
 
 // App icon embedded as data: URIs (allowed by the CSP's img-src data:), so the single file stays self-contained.
 const b64 = (p) => readFileSync(join(root, p)).toString('base64');

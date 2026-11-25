@@ -7,8 +7,9 @@ The Excel workbook stays the database. The app opens it, turns rows and multi-li
 risks, mitigation items, mitigation groups, assumptions, components), checks the writing conventions and the consistency
 between sheets, and shows everything in views that Excel cannot provide. Write mode is optional and off by default.
 
-- **100 % local**: one HTML file, no server, no libraries, no fonts or scripts from the internet. The page's
-  Content-Security-Policy makes the browser refuse every network request.
+- **100 % local**: one HTML file, no server, nothing loaded from the internet at runtime. Third-party libraries are
+  allowed, but only inlined into that HTML at build time (`src/vendor/`). The page's Content-Security-Policy makes the
+  browser refuse every network request.
 - **Read-only by default**: nothing is written unless write mode is switched on and the change is confirmed.
 - **English UI**.
 
@@ -55,7 +56,9 @@ Click **Read-only** in the top bar, enter your name and choose the repository fo
 node build.mjs
 ```
 
-Builds `dist/risk-register-explorer.html` from `src/` (no dependencies). Tests:
+Builds `dist/risk-register-explorer.html` from `src/`. External libraries or code may be used if they are stored in
+`src/vendor/` (browser build, pinned version, license and hash recorded in `src/vendor/README.md`); the build inlines
+them, so the downloaded HTML still works 100 % offline. Never reference a CDN or any URL at runtime. Tests:
 
 ```bash
 node tests/run.cjs
