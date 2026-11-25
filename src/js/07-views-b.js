@@ -153,63 +153,61 @@ const FLOW_ORDER = ['component', 'assumption', 'threat', 'risk', 'rmi', 'group']
 VIEWS.connections = function () {
   const ui = state.ui.flow;
   const controls = h('div.controls'), host = h('div.flow-host');
-  flowUndo = (lc) => { if (lc.prev !== ui.focus) { ui.focus = lc.prev; drawControls(); draw(); } openObj(lc.o); };
+  flowUndo = (lc) => { if (lc.prev !== ui.focus) { ui.focus = lc.prev; ui.draft = null; drawControls(); draw(); } openObj(lc.o); };
   let cleanup = null;
+  const baseRisks = () => (ui.hideNR ? M.risks.filter((r) => !r.notRelevant) : M.risks);
+  /* Every change of the search goes through here: clicks in the columns, the focus bar, the search field, the library.
+     cols: switch on the columns of the object types the search asks for; refocus: keep typing in the search field. */
+  const setFocus = (expr, opts) => {
+    opts = opts || {};
+    ui.focus = expr || null; ui.draft = null;
+    if (opts.cols) { const need = exprTypes(ui.focus); if (need.some((t) => !ui.cols.includes(t))) ui.cols = FLOW_ORDER.filter((t) => ui.cols.includes(t) || need.includes(t)); }
+    drawControls(); draw();
+    if (opts.refocus) { const q = document.getElementById('flow-q'); if (q) { if (q.value) q.value += ' '; q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+  };
+  const api = { setFocus, redraw: () => { drawControls(); draw(); }, controls: () => drawControls(), baseRisks };
 
   const draw = () => {
     if (cleanup) { cleanup(); cleanup = null; }
     clear(host);
-    /* Focus = list of terms; a term = one or more objects of the same type.
-       Objects inside a term combine with OR (Ctrl+click batch), terms combine with AND (each plain click adds a term). */
-    const T = ui.focus, F = T.flat(), f = F.length > 0, single = F.length === 1;
-    const byType = (t) => F.filter((o) => o.type === t);
+    /* The search (ui.focus) is an expression tree (05q-query.js): every term asks whether an anchor — a risk with what it
+       links, or an object no visible risk links — is linked to an object; AND / OR / NOT combine the answers. A plain
+       click adds the object with AND, a Ctrl+click batch adds one OR term per object type. */
+    const f = !!ui.focus, atoms = exprAtoms(ui.focus);
+    const F = atoms.filter((x) => !x.neg && x.n.k === 'obj').map((x) => x.n.o); // objects the search names (highlighted)
     const cols = FLOW_ORDER.filter((t) => ui.cols.includes(t));
     /* “Hide not relevant”: not-relevant risks leave the view, and threats whose risks are all not relevant;
        every other column keeps its objects (only links through hidden risks disappear). */
-    const baseRisks = ui.hideNR ? M.risks.filter((r) => !r.notRelevant) : M.risks;
-    if (f && ui.hideNR && F.some(onlyNotRelevant)) {
-      host.append(emptyState('The focus contains objects hidden by “Hide not relevant”', 'Their risks are all not relevant (column “Threat relevance”). Switch the filter off to show them.'),
-        h('p', h('button.btn', { type: 'button', id: 'nr-show', onclick: () => { ui.hideNR = false; ui.hideNRFlash = true; drawControls(); draw(); } }, 'Show not relevant')));
+    const res = evalFocus(ui.focus, baseRisks());
+    const showNR = () => h('button.btn', { type: 'button', id: 'nr-show', onclick: () => { ui.hideNR = false; ui.hideNRFlash = true; drawControls(); draw(); } }, 'Show not relevant');
+    if (res.error) { host.append(emptyState('The search cannot be evaluated', res.error)); return; }
+    if (f && !res.hits.length) {
+      if (res.hidden.length) host.append(emptyState('The focus contains objects hidden by “Hide not relevant”', res.hidden.join(', ') + ': their risks are all not relevant (column “Threat relevance”). Switch the filter off to show them.'), h('p', showNR()));
+      else host.append(emptyState('No path satisfies the whole search', 'No risk (and no object without risks) of the risk analysis matches every part of the search. Click an “and” in the focus bar to change it to “or”, or remove an object.'));
       return;
     }
-    let riskSet = baseRisks, rmiSet = null, groupSet = null;
-    if (f) {
-      for (const term of T) { const rs = new Set(term.flatMap((o) => (o.type === 'risk' ? [o] : o.risks))); riskSet = riskSet.filter((r) => rs.has(r)); }
-      for (const term of T.filter((x) => x[0].type === 'group')) { const ok = new Set(term.flatMap((g) => g.rmis)); rmiSet = new Set([...(rmiSet || ok)].filter((m) => ok.has(m))); }
-      const fg = byType('group'), fm = byType('rmi');
-      if (fg.length) groupSet = new Set(fg);
-      if (fm.length) { rmiSet = new Set(fm.filter((m) => !rmiSet || rmiSet.has(m))); if (!groupSet) groupSet = new Set(fm.flatMap((m) => m.groups)); }
-      if (rmiSet) riskSet = riskSet.filter((r) => r.items.some((i) => rmiSet.has(i.rmi)));
-      if (!single && !riskSet.length) { host.append(emptyState('No path satisfies the whole focus', 'No risk in the risk analysis matches every term of the focus. Remove an object from the focus bar above.')); return; }
-    }
-    const only = (type, list) => { const sel = byType(type); return sel.length ? list.filter((x) => sel.includes(x)) : list; };
-    const rel = {
-      component: (r) => only('component', r.components), assumption: (r) => only('assumption', r.assumptions), threat: (r) => (r.threat ? [r.threat] : []), risk: (r) => [r],
-      rmi: (r) => uniq(r.items.map((o) => o.rmi)).filter((m) => !rmiSet || rmiSet.has(m)),
-      group: (r) => uniq(r.items.filter((o) => !rmiSet || rmiSet.has(o.rmi)).flatMap((o) => o.groups)).filter((g) => !groupSet || groupSet.has(g)),
-    };
-    /* nodes per column */
     const nodes = {};
-    for (const t of cols) {
-      if (!f) nodes[t] = { component: M.components, assumption: M.assumptions, threat: M.threats.filter((x) => x.risks.length && (!ui.hideNR || !onlyNotRelevant(x))), risk: baseRisks, rmi: M.rmis, group: M.groups }[t].slice();
-      else if (t === 'rmi' && rmiSet && single) nodes[t] = [...rmiSet];
-      else if (t === 'group' && groupSet && single) nodes[t] = [...groupSet];
-      else nodes[t] = uniq(riskSet.flatMap(rel[t]));
-    }
+    for (const t of cols) nodes[t] = uniq(res.hits.flatMap((x) => x.show[t]));
+    const riskHits = res.hits.filter((x) => x.a.r), riskSet = riskHits.map((x) => x.a.r), showOf = new Map(riskHits.map((x) => [x.a.r, x.show]));
     const baseSort = {
       component: (a, b) => natCmp(a.name, b.name), assumption: (a, b) => natCmp(a.id, b.id), threat: (a, b) => (a.num || 999) - (b.num || 999) || natCmp(a.id, b.id),
       risk: (a, b) => ((a.threat && a.threat.num) || 999) - ((b.threat && b.threat.num) || 999) || natCmp(a.id, b.id), rmi: (a, b) => natCmp(a.id, b.id), group: (a, b) => natCmp(a.id, b.id),
     };
     for (const t of cols) nodes[t].sort(baseSort[t]);
-    /* edges between adjacent columns */
+    /* edges between adjacent columns: per risk (weight = number of risks), drawn only between objects that one satisfied
+       part of the search shows together; item → group edges are the group's “RMI ID” membership */
+    const okey = (o) => o.type + ':' + (o.key || o.id);
     const edgeSets = [];
     for (let i = 0; i < cols.length - 1; i++) {
       const X = cols[i], Y = cols[i + 1], map = new Map();
-      const add = (a, b, warn, r) => { const k = a.type + ':' + a.id + '>' + b.type + ':' + b.id; let e = map.get(k); if (e) e.w++; else { e = { a, b, w: 1, warn }; map.set(k, e); } if (r) (e.risks || (e.risks = new Set())).add(r); };
+      const add = (a, b, r) => { const k = okey(a) + '>' + okey(b); let e = map.get(k); if (e) { if (r) e.w++; } else { e = { a, b, w: 1, warn: false }; map.set(k, e); } if (r) (e.risks || (e.risks = new Set())).add(r); };
       if (X === 'rmi' && Y === 'group') {
-        for (const m of nodes.rmi) for (const g of m.groups) if (!groupSet || groupSet.has(g)) add(m, g, false);
+        for (const x of res.hits) for (const s of x.shows) for (const m of s.rmi) for (const g of m.groups) if (s.group.includes(g)) add(m, g, null);
       } else {
-        for (const r of riskSet) for (const a of rel[X](r)) for (const b of rel[Y](r)) add(a, b, false, r);
+        for (const x of riskHits) {
+          const seen = new Set();
+          for (const s of x.shows) for (const a of s[X]) for (const b of s[Y]) { const k = okey(a) + '>' + okey(b); if (!seen.has(k)) { seen.add(k); add(a, b, x.a.r); } }
+        }
       }
       edgeSets.push([...map.values()]);
     }
@@ -233,7 +231,7 @@ VIEWS.connections = function () {
     flowLast = { riskSet, nodes, cols };
     const els = new Map();
     const flow = h('div.flow', { style: { gridTemplateColumns: 'repeat(' + cols.length + ', minmax(150px, 1fr))' } });
-    const addFocus = (o) => { ui.focus = T.concat([[o]]); drawControls(); draw(); };
+    const addFocus = (o) => setFocus(exprAdd(ui.focus, QX.obj(o), 'and'));
     /* Ctrl/Cmd + click: collect objects first; they are applied together when the key is released. */
     const togglePending = (o, el) => {
       ui.pending = ui.pending.includes(o) ? ui.pending.filter((x) => x !== o) : ui.pending.concat(o);
@@ -244,14 +242,14 @@ VIEWS.connections = function () {
       if (!ui.pending.length) return;
       const byT = groupBy(ui.pending.filter((o) => !F.includes(o)), (o) => o.type);
       ui.pending = [];
-      ui.focus = T.concat([...byT.values()]);
-      drawControls(); draw();
+      setFocus([...byT.values()].reduce((acc, list) => exprAdd(acc, list.length > 1 ? { k: 'or', c: list.map(QX.obj) } : QX.obj(list[0]), 'and'), ui.focus));
     };
     for (const t of cols) {
       const col = h('div.flow-col.t-' + t, h('div.flow-col-h', icon(TYPES[t].icon, 14), TYPES[t].plural, h('span.count', nodes[t].length)));
       for (const o of nodes[t]) {
-        const el = h('button.fnode.t-' + t + (F.includes(o) ? '.focus' : '') + (ui.pending.includes(o) ? '.pending' : ''), {
-          type: 'button', tip: TYPES[t].label + ' ' + objLabel(o) + (objTitle(o) ? '\n' + truncate(objTitle(o), 200) : '') + (F.includes(o) ? '\nFocused — click to open details' : f ? '\nClick to add to the focus (AND)' : '\nClick to isolate its connections') + '\nDouble-click: open details' + '\nCtrl+click: select several, applied when Ctrl is released (same type = OR)',
+        const isF = F.includes(o), isM = !isF && res.matched.has(o);
+        const el = h('button.fnode.t-' + t + (isF ? '.focus' : '') + (isM ? '.match' : '') + (ui.pending.includes(o) ? '.pending' : ''), {
+          type: 'button', tip: TYPES[t].label + ' ' + objLabel(o) + (objTitle(o) ? '\n' + truncate(objTitle(o), 200) : '') + (isM ? '\nFound by a content filter of the search' : '') + (isF ? '\nFocused — click to open details' : f ? '\nClick to add to the search (AND)' : '\nClick to isolate its connections') + '\nDouble-click: open details' + '\nCtrl+click: select several, applied when Ctrl is released (same type = OR)',
           onclick: (e) => {
             if (e.ctrlKey || e.metaKey) { togglePending(o, e.currentTarget); return; }
             /* Single click = focus, double click = details only. The focus is applied after a short delay; if the
@@ -261,11 +259,11 @@ VIEWS.connections = function () {
             clearTimeout(clickTimer);
             if (e.detail >= 2 || (lastClick && lastClick.o === o && now - lastClick.t < DBL_MS && sameSpot(lastClick, e))) {
               const lc = lastClick; lastClick = null;
-              if (lc && lc.applied && lc.prev !== ui.focus) { ui.focus = lc.prev; drawControls(); draw(); }
+              if (lc && lc.applied && lc.prev !== ui.focus) { ui.focus = lc.prev; ui.draft = null; drawControls(); draw(); }
               openObj(o); return;
             }
             const lc = lastClick = { o, t: now, x: e.clientX, y: e.clientY, prev: ui.focus, applied: false };
-            clickTimer = setTimeout(() => { lc.applied = true; if (F.includes(o)) openObj(o); else addFocus(o); }, 280);
+            clickTimer = setTimeout(() => { lc.applied = true; if (isF) openObj(o); else addFocus(o); }, 280);
           },
         }, icon(TYPES[t].icon, 13), h('span.fnode-id', objLabel(o)), t !== 'component' ? h('span.fnode-t', objTitle(o)) : null,
           t === 'risk' ? pill(o.residual, 'Risk index after treatment') : null, o.issues.some((i) => i.cat !== 'warning') ? h('i.fnode-err') : null);
@@ -294,17 +292,19 @@ VIEWS.connections = function () {
       }
     };
     /* hover: highlight only what the risk analysis links to the hovered object. Every link runs through
-       the risks: object -> its own risks -> the threats, components, assumptions, items and groups of exactly those risks. */
+       the risks: object -> its own risks -> the threats, components, assumptions, items and groups of exactly those risks
+       (as far as the search shows them for that risk). */
     const inScope = new Set(riskSet);
     const lineage = (o) => {
       const rs = new Set((o.type === 'risk' ? [o] : o.risks).filter((r) => inScope.has(r)));
       const ns = new Set([o]);
       for (const r of rs) {
+        const s = showOf.get(r);
         ns.add(r);
-        if (o.type !== 'threat' && r.threat) ns.add(r.threat);
-        if (o.type !== 'component') r.components.forEach((c) => ns.add(c));
-        if (o.type !== 'assumption') r.assumptions.forEach((a) => ns.add(a));
-        if (o.type !== 'rmi' && o.type !== 'group') { r.items.forEach((i) => ns.add(i.rmi)); r.groups.forEach((g) => ns.add(g)); }
+        if (o.type !== 'threat') s.threat.forEach((x) => ns.add(x));
+        if (o.type !== 'component') s.component.forEach((c) => ns.add(c));
+        if (o.type !== 'assumption') s.assumption.forEach((a) => ns.add(a));
+        if (o.type !== 'rmi' && o.type !== 'group') { s.rmi.forEach((m) => ns.add(m)); s.group.forEach((g) => ns.add(g)); }
       }
       if (o.type === 'rmi') o.groups.forEach((g) => ns.add(g));
       if (o.type === 'group') o.rmis.forEach((m) => ns.add(m));
@@ -333,7 +333,8 @@ VIEWS.connections = function () {
     if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(() => requestAnimationFrame(paint)); ro.observe(wrap); }
     requestAnimationFrame(paint);
     cleanup = () => { if (ro) ro.disconnect(); };
-    host.prepend(h('p.note', icon('info', 12), f ? 'Showing ' + total + ' objects on the paths through ' + (single ? 'the focused object' : 'the focus') + '. Click another object to narrow further (AND); Ctrl+click several objects to add them together (same type = OR). ' : total + ' objects. Click any object to isolate its connections, or Ctrl+click several and release Ctrl; hover to highlight only the objects linked to it through its own risks. ',
+    if (res.hidden.length) host.prepend(h('p.note.warn', icon('warning', 12), res.hidden.join(', ') + ' — hidden by “Hide not relevant”: their risks are all not relevant.', showNR()));
+    host.prepend(h('p.note', icon('info', 12), f ? 'Showing ' + total + ' objects on the paths that satisfy the search' + (riskSet.length ? ' (' + plural(riskSet.length, 'risk') + ')' : '') + '. Click another object to narrow further (AND); click an “and” / “or” in the focus bar to switch it. ' : total + ' objects. Click any object to isolate its connections, or Ctrl+click several and release Ctrl; hover to highlight only the objects linked to it through its own risks. Type a logical search above, or build content filters. ',
       'Line thickness = number of risks behind a link. Items are linked to groups by the RMI IDs listed in the group’s “RMI ID” cell.'));
   };
   const drawControls = () => {
@@ -343,16 +344,13 @@ VIEWS.connections = function () {
       onclick: () => { if (ui.cols.includes(t)) { if (ui.cols.length > 2) ui.cols = ui.cols.filter((x) => x !== t); } else ui.cols = ui.cols.concat(t); drawControls(); draw(); },
     }, icon(TYPES[t].icon, 13), TYPES[t].plural)))),
       h('div.ctl.nr-slot', nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); })));
-    const removeObj = (o) => { ui.focus = ui.focus.map((term) => term.filter((x) => x !== o)).filter((term) => term.length); drawControls(); draw(); };
-    if (ui.focus.length) controls.append(h('div.ctl.focusbar', h('span.ctl-l', 'Focused on'),
-      ui.focus.map((term, ti) => [ti ? h('span.focus-op', { tip: 'Every shown path satisfies both sides' }, 'and') : null,
-        h('span.focus-term' + (term.length > 1 ? '.multi' : ''), term.map((o, oi) => [oi ? h('span.focus-op', { tip: 'Either object' }, 'or') : null,
-          h('span.focus-i', chip(o, { label: ui.focus.flat().length < 3, max: 40 }), h('button.icon-btn.sm', { type: 'button', tip: 'Remove from focus', onclick: () => removeObj(o) }, icon('close', 11)))]))]),
-      h('button.btn.ghost.sm', { type: 'button', onclick: () => { ui.focus = []; ui.pending = []; drawControls(); draw(); } }, icon('close', 12), 'Show everything')));
+    controls.append(flowSearchRow(ui, api));
+    if (ui.focus) controls.append(flowFocusBar(ui, api));
     if (ui.pending.length) controls.append(h('div.ctl.pendingbar', { id: 'flow-pending' }, h('span.ctl-l', 'Selecting'), ui.pending.map((o) => chip(o)), h('span.muted.small', 'release Ctrl to apply')));
+    if (ui.libOpen) controls.append(flowLibrary(ui, api));
   };
   drawControls(); draw();
-  return h('div.view', viewHead('Connections', 'How components, assumptions, threats, risks, mitigation items and groups hang together. Choose the columns; links between non-adjacent object types are derived through the risks.'), controls, host);
+  return h('div.view', viewHead('Connections', 'How components, assumptions, threats, risks, mitigation items and groups hang together. Choose the columns; links between non-adjacent object types are derived through the risks. Search by clicks, by a logical expression or with content filters.'), controls, host);
 };
 
 /* =============================== ISSUES =============================== */

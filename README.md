@@ -57,9 +57,33 @@ everywhere else.
 
 Overview · Risk matrix (risks or threats per cell; before, after, side by side, movement) · Risks · Threats (coverage of
 the 47 elementary threats) · Mitigations (items and groups) · Assumptions · Components (exposure map) · Connections
-(linked columns with hover tracing and multi-object focus: click = AND, Ctrl+click = OR, double-click = details) ·
-History (baselines and change logs) · Errors & warnings (format errors, consistency errors, warnings, each with sheet,
-cell and line). Every module can be exported to a new Excel file.
+(linked columns with hover tracing and a search: click = AND, Ctrl+click = OR, double-click = details, logical
+search and content filters — see below) · History (baselines and change logs) · Errors & warnings (format errors,
+consistency errors, warnings, each with sheet, cell and line). Every module can be exported to a new Excel file.
+
+## Searching in Connections
+
+- **By clicks.** Click an object to add it to the search (AND); Ctrl+click several and release Ctrl to add them
+  together (same type = OR). In the **Focused on** bar every “and” / “or” can be clicked to switch it (AND binds before
+  OR, brackets show the grouping), ¬ negates an object (click the red “not” to undo) and × removes it.
+- **Logical search.** Type your own expression, e.g. `(T.BSI.15 OR T.BSI.43) AND NOT RMI-008` or
+  `"Edge Gateway" AND NOT @no-owner`: IDs or component names, `AND` `OR` `NOT` `( )`, `@name` for library entries.
+  Suggestions complete IDs and names while typing (↑ ↓, Enter or Tab); the line below says how the search reads and how
+  many risks match, or what is wrong and where. Enter applies it. The ⓘ button explains the syntax with examples from
+  the opened workbook.
+- **Content filters.** *Content filter* opens a builder that works by clicks: choose the object type, click the
+  attribute in its generic card (every attribute, plus **Errors** and **Warnings**), choose contains / does not contain /
+  is empty / is not empty and type the word. A live preview shows what matches. Saved filters are used as `@name`.
+- **Combine and save.** *Filters & saved searches* lists the filters; AND / OR / AND NOT add one to the search, so
+  content filters, objects and logic combine freely. *Save search* keeps the current search, which can be shown again or
+  used inside other searches as `@name`.
+- **Meaning.** Every term asks whether a path of the risk analysis (a risk with its threat, components, assumptions,
+  mitigation items and groups) is linked to the object: `A AND B` = risks linked to both, `NOT A` = risks not linked to
+  A. The columns then show only the objects the search names, plus everything else those risks link.
+- **Where they are kept.** Filters and saved searches stay while the tab is open (also when you reload or open another
+  workbook). Nothing is stored in the browser: **Download library** saves them as a JSON file and **Load library…**
+  reads it back — also to share them with colleagues. The Connections export states the search and what each `@name`
+  means.
 
 ## Write mode (optional)
 

@@ -107,8 +107,10 @@ const EXPORTS = {
     rows: M.components.map((c) => { const b = levelCounts(c.risks, (r) => r.index), a = levelCounts(c.risks, (r) => r.residual);
       return [c.name, c.risks.length, ids(c.risks), ids(uniq(c.risks.map((r) => r.threat).filter(Boolean))), ids(c.assumptions), ids(uniq(c.risks.flatMap((r) => r.groups))), b.low, b.medium, b.high, a.low, a.medium, a.high, num0(maxOf(c.risks, (r) => r.index)), num0(maxOf(c.risks, (r) => r.residual))].concat(CFG.coreValues.map((v) => c.risks.filter((r) => r.coreValues.includes(v.key)).length), issueCells(c)); }) }] }) },
   connections: { label: 'Connections', run() {
-    const L = flowLast || { riskSet: M.risks, nodes: {}, cols: [] }, focus = state.ui.flow.focus.map((t) => t.map((o) => objLabel(o)).join(' OR ')).join(' AND ');
-    return { filter: [focus ? 'focus = ' + focus : '', state.ui.flow.hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none', sheets: [
+    const L = flowLast || { riskSet: M.risks, nodes: {}, cols: [] }, focus = exprToText(state.ui.flow.focus);
+    /* the definitions of the library entries the search uses, so the export says what @name meant */
+    const refs = uniq(exprAtoms(state.ui.flow.focus).filter((x) => x.n.k === 'ref').map((x) => x.n.name)).map(libGet).filter(Boolean).map((it) => '@' + it.name + ' = ' + (it.kind === 'filter' ? filterDesc(it) : it.expr));
+    return { filter: [focus ? 'search = ' + focus : '', refs.join('; '), state.ui.flow.hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none', sheets: [
       { name: 'Paths', cols: [['Risk ID', 12], ['Threat', 12], ['Components', 18], ['Assumptions', 12], ['Mitigation items', 14], ['Mitigation groups', 12], ['Risk index after', 9]],
         rows: L.riskSet.map((r) => [r.id, r.threat ? r.threat.id : '', r.components.map((c) => c.name).join('\n'), ids(r.assumptions), ids(uniq(r.items.map((o) => o.rmi))), ids(r.groups), num0(r.residual)]) },
       { name: 'Objects shown', cols: [['Type', 16], ['ID', 14], ['Title', 70]], rows: L.cols.flatMap((t) => (L.nodes[t] || []).map((o) => [TYPES[t].label, objLabel(o), objTitle(o) || ''])) }] };
