@@ -37,6 +37,15 @@ to risks and to groups. “Risk treatment option”, “Content”, “Groups”
 not read (the app only warns when a “Risk treatment option” or “Content” cell is not a formula). Workbooks in the older
 text-based layout (no “RMI ID” columns) are not supported.
 
+**Threat relevance** is read per risk row: despite its name it says whether the **risk** is relevant. A risk is *not
+relevant* when the text contains the words “not relevant” (any case, anywhere in the text); an empty cell or a text that
+only resembles them (“Not relevent”) is a warning and counts as relevant. **Hide not relevant** is on by default, and
+separately for each of Risks, Threats, Mitigations (groups tab and items tab) and Connections. It hides not-relevant
+risks, and threats, groups and items whose risks are all not relevant. Items and groups without any risk stay visible.
+Opening Connections from the panel of such an object switches its filter off (the button flashes). In the BSI coverage
+grid, threats with only not-relevant risks are always shown blank. Not-relevant risks are listed last and marked
+everywhere else.
+
 ## What the app shows
 
 Overview · Risk matrix (risks or threats per cell; before, after, side by side, movement) · Risks · Threats (coverage of

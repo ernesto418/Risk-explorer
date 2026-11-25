@@ -33,6 +33,24 @@ function parseEnum(raw, list) {
 
 /** Loose form of an RMI ID, used only to recognise a mis-typed reference (case, spaces, dash variants). */
 const looseId = (s) => s.toLowerCase().replace(/[\u2010-\u2015\u2212_]/g, '-').replace(/\s+/g, '');
+/**
+ * “Threat relevance” of a risk (one value per risk row; despite its name it says whether the RISK is relevant).
+ * Not relevant = the words “not relevant” anywhere in the text (any case). Anything else counts as relevant; a text that
+ * only resembles “not relevant” (“Not relevent”, “not-relevant”, “no relevant”…) is returned as `typo` and NOT hidden.
+ */
+function relevanceOf(raw) {
+  if (!raw) return { notRelevant: false, typo: null };
+  if (/\bnot\s+relevant\b/i.test(raw)) return { notRelevant: true, typo: null };
+  const w = raw.toLowerCase().replace(/[^a-z]+/g, ' ').trim().split(' ');
+  for (let i = 0; i < w.length; i++) {
+    if (/^no[nt]?rel/.test(w[i]) && levenshtein(w[i], 'notrelevant') <= 2) return { notRelevant: false, typo: w[i] };
+    if (/^no[nt]?$/.test(w[i]) && w[i + 1] && /^rel/.test(w[i + 1]) && levenshtein(w[i + 1], 'relevant') <= 2) return { notRelevant: false, typo: w[i] + ' ' + w[i + 1] };
+  }
+  return { notRelevant: false, typo: null };
+}
+/** “Only not relevant”: a risk that is not relevant, or an object (threat, RMI, group, component…) whose risks all are. */
+function onlyNotRelevant(o) { if (o.type === 'risk') return !!o.notRelevant; const rs = o.risks || []; return rs.length > 0 && rs.every((r) => r.notRelevant); }
+
 /** “RMI-001”, or “RMI 17” for IDs that do not say RMI themselves. */
 const rmiName = (m) => (/^rmi/i.test(m.id) ? m.id : 'RMI ' + m.id);
 
@@ -244,7 +262,7 @@ function buildModel(wb, fileInfo) {
     R = columns(riskSheet, {
       threatId: [(n) => /^threat id$/.test(n), 'Threat ID', true],
       threat: [(n) => /^threat$/.test(n), 'Threat', true],
-      relevance: [(n) => /^threat relevance/.test(n), 'Threat relevance', false],
+      relevance: [(n) => /^threat relevance/.test(n), 'Threat relevance', false], // per RISK: is this risk relevant
       riskId: [(n) => /^risk id$/.test(n), 'Risk ID', true],
       description: [(n) => /^risk description/.test(n), 'Risk description', true],
       component: [(n) => /^affected components?$/.test(n), 'Affected component', true],
@@ -268,7 +286,7 @@ function buildModel(wb, fileInfo) {
     let cur = null;
     const seenCombo = new Set();
 
-    function getThreat(tId, tName, rel, r) {
+    function getThreat(tId, tName, r) {
       const mName = /^G\s*0\s*\.\s*(\d{1,3})\b[\s:.\u2013-]*(.*)$/i.exec(tName);
       const mId = /^T\.([A-Za-z]+)\.(\d+)$/.exec(tId);
       const key = tId || (mName ? 'G 0.' + mName[1] : tName);
@@ -279,10 +297,9 @@ function buildModel(wb, fileInfo) {
       if (t) {
         if (firstTime && mismatch) addIssue('C_THREAT_MISMATCH', 'Threat ID ' + tId + ' refers to number ' + mId[2] + ', but the threat name in this row starts with G 0.' + mName[1] + '. The row is filed under ' + t.id + '.', { sheet: name, row: r, col: R.threat, on: [t] });
         else if (firstTime && tName && t.name && looseKey(tName) !== looseKey(t.name)) addIssue('W_THREAT_NAME_VARIES', 'Threat ' + t.id + ' is named “' + tName + '” here but “' + t.name + '” in row ' + (t.row + 1) + '.', { sheet: name, row: r, col: R.threat, on: [t] });
-        if (rel && !t.relevance) t.relevance = rel;
         return t;
       }
-      t = { type: 'threat', id: key, name: tName, title: mName ? mName[2].trim() : tName, num: mName ? +mName[1] : (mId && /^bsi$/i.test(mId[1]) ? +mId[2] : null), relevance: rel, risks: [], issues: [], sheet: name, row: r };
+      t = { type: 'threat', id: key, name: tName, title: mName ? mName[2].trim() : tName, num: mName ? +mName[1] : (mId && /^bsi$/i.test(mId[1]) ? +mId[2] : null), risks: [], issues: [], sheet: name, row: r };
       M.threats.push(t); M.by.threat.set(key, t);
       if (!tId) addIssue('F_MISSING_ID', 'Threat “' + truncate(tName, 60) + '” has no Threat ID.', { sheet: name, row: r, col: R.threatId, on: [t] });
       else if (!CFG.patterns.threatId.test(tId)) addIssue('F_ID', 'Threat ID “' + tId + '” does not match the pattern T.BSI.<number>.', { sheet: name, row: r, col: R.threatId, on: [t] });
@@ -300,7 +317,7 @@ function buildModel(wb, fileInfo) {
       const freqRaw = cell(r, R.freq), effectRaw = cell(r, R.effect), rmiRaw = cell(r, R.rmiIds), categoryRaw = cell(r, R.category);
       const hasRisk = !!(rId || description || compRaw || freqRaw || effectRaw || rmiRaw || categoryRaw);
       if (!tId && !tName && !hasRisk) continue;
-      if (tId || tName) cur = getThreat(tId, tName, rel, r);
+      if (tId || tName) cur = getThreat(tId, tName, r);
       if (!hasRisk) continue;
       report(riskSheet).rows++;
       const risk = {
@@ -310,6 +327,7 @@ function buildModel(wb, fileInfo) {
         save: cell(r, R.save), categoryRaw, category: null, rmiRaw, items: [],
         freqAfterRaw: cell(r, R.freqAfter), effectAfterRaw: cell(r, R.effectAfter), freqAfter: null, effectAfter: null,
         indexAfter: null, indexAfterCell: rawNum(r, R.indexAfter), indexAfterCalc: null, reduction: rawNum(r, R.reduction), reductionRaw: cell(r, R.reduction),
+        relevanceRaw: rel, notRelevant: false,
         groups: [], issues: [], sheet: name, row: r,
       };
       M.risks.push(risk);
@@ -321,6 +339,12 @@ function buildModel(wb, fileInfo) {
       if (rId && M.by.risk.has(rId)) addIssue('C_DUP_ID', 'Risk ID “' + rId + '” is used more than once (also in row ' + (M.by.risk.get(rId).row + 1) + ').', { sheet: name, row: r, col: R.riskId, on: [risk, M.by.risk.get(rId)] });
       else if (rId) M.by.risk.set(rId, risk);
       if (!description) addIssue('W_MISSING', 'Risk ' + risk.id + ' has no description.', { sheet: name, row: r, col: R.description, on: [risk] });
+      if (R.relevance != null) {
+        const rv = relevanceOf(rel);
+        risk.notRelevant = rv.notRelevant;
+        if (!rel) addIssue('W_MISSING', 'Risk ' + risk.id + ' has no “Threat relevance”; it counts as relevant.', { sheet: name, row: r, col: R.relevance, on: [risk] });
+        else if (rv.typo) addIssue('W_RELEVANCE', 'Risk ' + risk.id + ': “Threat relevance” contains “' + rv.typo + '”, which looks like “not relevant” but is not written so. The risk counts as relevant and is not hidden.', { sheet: name, row: r, col: R.relevance, excerpt: rel, on: [risk] });
+      }
       if (!compRaw) addIssue('W_MISSING', 'Risk ' + risk.id + ' has no affected component.', { sheet: name, row: r, col: R.component, on: [risk] });
       else rawComponents.push({ raw: compRaw, risk });
 

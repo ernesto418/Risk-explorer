@@ -264,7 +264,7 @@ VIEWS.matrix = function () {
 /* =============================== RISKS =============================== */
 function riskCard(r) {
   return objCard(r, {
-    main: [r.components.map((c) => h('span.meta-comp', icon('component', 12), c.name)), ciaBadges(r.coreValues), catTag(r),
+    main: [r.notRelevant ? nrTag(r) : null, r.components.map((c) => h('span.meta-comp', icon('component', 12), c.name)), ciaBadges(r.coreValues), catTag(r),
       h('span.meta-n', { tip: 'Individual mitigation items' }, icon('rmi', 12), String(r.items.length)),
       r.assumptions.length ? h('span.meta-n', { tip: 'Related assumptions' }, icon('assumption', 12), String(r.assumptions.length)) : null],
     side: pillPair(r),
@@ -272,15 +272,17 @@ function riskCard(r) {
 }
 VIEWS.risks = function () {
   const ui = state.ui.risks;
-  const controls = h('div.controls'), list = h('div.list'), info = h('div.list-info');
+  const controls = h('div.controls'), list = h('div.list'), info = h('div.list-info'), nrSlot = h('div.ctl');
   const draw = () => {
-    const risks = applyRiskFilter(M.risks, ui.f);
+    const matching = applyRiskFilter(M.risks, ui.f), nrN = ui.hideNR ? matching.filter((r) => r.notRelevant).length : 0;
+    const risks = ui.hideNR ? matching.filter((r) => !r.notRelevant) : matching;
+    fill(nrSlot, nrToggle(ui, 'hideNR', plural(nrN, 'risk') + ' hidden', draw));
     const sorters = {
       index: (a, b) => (b.index || 0) - (a.index || 0), after: (a, b) => (b.residual || 0) - (a.residual || 0),
       reduction: (a, b) => ((b.index || 0) - (b.residual || 0)) - ((a.index || 0) - (a.residual || 0)), id: () => 0,
     };
     risks.sort((a, b) => sorters[ui.sort](a, b) || natCmp(a.id, b.id));
-    fill(info, risks.length + ' of ' + M.risks.length + ' risks');
+    fill(info, risks.length + ' of ' + M.risks.length + ' risks' + (nrN ? ' (' + nrN + ' not relevant hidden)' : ''));
     clear(list);
     if (!risks.length) { list.append(emptyState('No risks match the filters')); return; }
     if (ui.group === 'none') { risks.forEach((r) => list.append(riskCard(r))); return; }
@@ -299,7 +301,7 @@ VIEWS.risks = function () {
   const drawControls = () => {
     fill(controls, 
       searchBox('Search risks…', ui.f.q, (v) => { ui.f.q = v; draw(); }),
-      riskFilterControls(ui.f, () => { drawControls(); draw(); }, { levels: true }),
+      riskFilterControls(ui.f, () => { drawControls(); draw(); }, { levels: true }), nrSlot,
       h('div.ctl.grow'),
       h('div.ctl', h('span.ctl-l', 'Group by'), segmented([{ value: 'threat', label: 'Threat' }, { value: 'component', label: 'Component' }, { value: 'category', label: 'Treatment' }, { value: 'none', label: 'None' }], ui.group, (v) => { ui.group = v; drawControls(); draw(); }, 'Group by')),
       selectBox('Sort', [{ value: 'index', label: 'Index before ↓' }, { value: 'after', label: 'Index after ↓' }, { value: 'reduction', label: 'Reduction ↓' }, { value: 'id', label: 'Risk ID' }], ui.sort, (v) => { ui.sort = v; draw(); }, true));
@@ -314,24 +316,31 @@ VIEWS.threats = function () {
   const tiles = h('div.tgrid');
   for (const c of BSI_THREATS) {
     const t = byNum.get(c.n);
-    const st = t ? (t.risks.length ? 'used' : 'listed') : 'absent';
+    /* a threat whose risks are all “not relevant” is shown as “listed, no risks” (always, whatever the filter) */
+    const nrOnly = !!t && onlyNotRelevant(t), st = t ? (t.risks.length && !nrOnly ? 'used' : 'listed') : 'absent';
     const mxB = t ? maxOf(t.risks, (r) => r.index) : null, mxA = t ? maxOf(t.risks, (r) => r.residual) : null;
     tiles.append(h((t ? 'button' : 'div') + '.ttile.' + st, {
       type: t ? 'button' : null, onclick: t ? () => openObj(t) : null,
-      tip: 'G 0.' + c.n + ' ' + c.name + '\nCore values primarily affected (BSI 200-3): ' + c.cia.join(', ') + '\n' + (st === 'used' ? plural(t.risks.length, 'risk') + ' in the analysis' : st === 'listed' ? 'Listed in the workbook without risks' + (t.relevance ? ': ' + truncate(t.relevance, 120) : '') : 'Not part of the workbook'),
+      tip: 'G 0.' + c.n + ' ' + c.name + '\nCore values primarily affected (BSI 200-3): ' + c.cia.join(', ') + '\n' + (st === 'used' ? plural(t.risks.length, 'risk') + ' in the analysis' : nrOnly ? 'Only not-relevant risks (' + t.risks.length + ')' : st === 'listed' ? 'Listed in the workbook without risks' : 'Not part of the workbook'),
     }, h('span.ttile-n', 'G 0.' + c.n), h('span.ttile-t', c.name),
-      st === 'used' ? h('span.ttile-f', h('span.muted', plural(t.risks.length, 'risk')), h('span.pill-pair', pill(mxB), icon('arrow', 10), pill(mxA))) : h('span.ttile-f.muted', st === 'listed' ? 'no risks' : 'not analysed')));
+      st === 'used' ? h('span.ttile-f', h('span.muted', plural(t.risks.length, 'risk')), h('span.pill-pair', pill(mxB), icon('arrow', 10), pill(mxA))) : h('span.ttile-f.muted', nrOnly ? 'not relevant' : st === 'listed' ? 'no risks' : 'not analysed')));
   }
   const extra = M.threats.filter((t) => !(t.num >= 1 && t.num <= 47));
-  const used = M.threats.filter((t) => t.risks.length).sort((a, b) => (a.num || 999) - (b.num || 999) || natCmp(a.id, b.id));
+  const used = M.threats.filter((t) => t.risks.length).sort((a, b) => (a.num || 999) - (b.num || 999) || natCmp(a.id, b.id)), ui = state.ui.threats;
   const others = M.threats.filter((t) => !t.risks.length);
   const card = (t) => objCard(t, { title: t.name, main: [h('span.meta-n', icon('risk', 12), plural(t.risks.length, 'risk')), uniq(t.risks.flatMap((r) => r.components)).slice(0, 5).map((c) => h('span.meta-comp', icon('component', 12), c.name))], side: t.risks.length ? h('span.pill-pair', pill(maxOf(t.risks, (r) => r.index), 'Highest index before treatment'), icon('arrow', 11), pill(maxOf(t.risks, (r) => r.residual), 'Highest index after treatment')) : null });
+  const usedBox = h('div'), controls = h('div.controls');
+  const drawUsed = () => {
+    const shown = ui.hideNR ? used.filter((t) => !onlyNotRelevant(t)) : used, nrN = used.length - shown.length;
+    fill(controls, nrToggle(ui, 'hideNR', plural(nrN, 'threat') + ' with only not-relevant risks hidden', drawUsed));
+    fill(usedBox, h('h2.list-title', 'Threats with risks ', h('span.count', shown.length)), h('div.list', shown.map(card)));
+  };
+  drawUsed();
   return h('div.view',
     viewHead('Threats', 'Coverage of the 47 elementary threats of the IT-Grundschutz Compendium, and the threats analysed in the workbook.'),
-    cardBox('Elementary threat coverage', used.filter((t) => t.num >= 1 && t.num <= 47).length + ' of 47 elementary threats have risks · pills show the highest risk index before → after treatment',
-      h('div', tiles, h('div.legend', h('span.legend-i', h('i.sw.tt-used'), 'analysed with risks'), h('span.legend-i', h('i.sw.tt-listed'), 'listed, no risks'), h('span.legend-i', h('i.sw.tt-absent'), 'not in the workbook')))),
-    h('h2.list-title', 'Threats with risks ', h('span.count', used.length)),
-    h('div.list', used.map(card)),
+    cardBox('Elementary threat coverage', used.filter((t) => t.num >= 1 && t.num <= 47 && !onlyNotRelevant(t)).length + ' of 47 elementary threats have relevant risks · pills show the highest risk index before → after treatment',
+      h('div', tiles, h('div.legend', h('span.legend-i', h('i.sw.tt-used'), 'analysed with risks'), h('span.legend-i', h('i.sw.tt-listed'), 'listed, no relevant risks'), h('span.legend-i', h('i.sw.tt-absent'), 'not in the workbook')))),
+    controls, usedBox,
     others.length ? [h('h2.list-title', 'Threats listed without risks ', h('span.count', others.length)), h('div.list', others.map(card))] : null,
     extra.length ? h('p.note', icon('info', 12), plural(extra.length, 'threat') + ' outside the BSI catalogue numbering: ' + extra.map((t) => t.id).join(', ')) : null);
 };

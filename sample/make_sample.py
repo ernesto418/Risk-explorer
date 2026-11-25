@@ -84,6 +84,8 @@ GROUPS = {
         "Terminate external connections in a demilitarised zone"]),
     "RMG09": ("Risk transference / sharing", "Operational procedures", [
         "Maintain an incident response on-call rota"]),
+    "RMG10": ("Risk mitigation / reduction", "Physical protection", [       # only linked to not-relevant risks
+        "Seal gateway housings with tamper evident labels"]),
 }
 
 THREATS = [
@@ -193,6 +195,20 @@ r = next(m); r["fa"], r["ea"] = "very frequently", EFFECT_K[3]                  
 r = next(m); r["red_override"] = 99                                             # wrong reduction value
 r = next(m); r["asm_title_override"] = True                                     # assumption cited with a different title
 dup = risks[7]; dup["rid"] = risks[6]["rid"]                                    # duplicate risk ID
+
+# "Threat relevance" is written per risk: despite its name it says whether the RISK is relevant
+for r in risks:
+    r["rel"] = "Directly relevant"
+for r in risks:
+    if r["num"] == 16:                                                          # threat whose risks are all not relevant
+        r["rel"] = "Not relevant: gateways are installed in locked cabinets (see A.1)."
+        r["ids"].append(ID["Seal gateway housings with tamper evident labels"])  # RMG10 and its item: only not-relevant risks
+next(r for r in risks if r["num"] == 43)["rel"] = "not relevant - replay protection is provided by the transport layer"  # mixed threat
+special = [r for r in risks if r["num"] not in (16, 43) and r["rid"] not in ("R.DB.2", "R.API.1", "R.GW.2")]
+special[10]["rel"] = "Indirectly relevant, covered by G 0.23."                  # relevant
+special[14]["rel"] = "Currently NOT RELEVANT: feature disabled in the Alpha release"   # not relevant (any case, any position)
+special[18]["rel"] = None                                                       # empty -> warning, counts as relevant
+special[22]["rel"] = "Not relevent for the Alpha release"                       # typo -> warning, NOT hidden
 mis = next(x for x in risks if x["num"] == 32); mis["tid_override"] = "T.BSI.23"  # threat id / name mismatch (first row of the threat)
 
 # group RMI IDs, with a few inconsistencies
@@ -247,10 +263,11 @@ for num, name, rel, comps in THREATS:
         ws.cell(row=row, column=2, value=f"T.BSI.{num}"); ws.cell(row=row, column=3, value=f"G 0.{num} {name}"); ws.cell(row=row, column=4, value=rel)
         row += 1
         continue
-    merged = num % 2 == 0   # even threats: merged threat cells; odd threats: value repeated on every row
+    merged = num % 2 == 0   # even threats: merged Threat ID / Threat cells; odd threats: value repeated on every row
     for k, r in enumerate(rs):
         if k == 0 or not merged:
-            ws.cell(row=row, column=2, value=r.get("tid_override", f"T.BSI.{num}")); ws.cell(row=row, column=3, value=r["tname"]); ws.cell(row=row, column=4, value=rel)
+            ws.cell(row=row, column=2, value=r.get("tid_override", f"T.BSI.{num}")); ws.cell(row=row, column=3, value=r["tname"])
+        ws.cell(row=row, column=4, value=r["rel"])                              # one relevance per risk row (never merged)
         asm = r.get("asm_override") or "\n".join(f"{a} {A_TITLE[a]}" for a in r["asm"])
         if r.get("asm_title_override") and r["asm"]:
             asm = f"{r['asm'][0]} Something else entirely"
@@ -271,7 +288,7 @@ for num, name, rel, comps in THREATS:
             ws.cell(row=row, column=20, value=r.get("red_override", idx - ia))
         row += 1
     if merged and len(rs) > 1:
-        for col in (2, 3, 4):
+        for col in (2, 3):
             ws.merge_cells(start_row=first, start_column=col, end_row=row - 1, end_column=col)
 for col, w in zip("BCDEFGHIJKLMNOPQRST", [11, 30, 22, 10, 50, 18, 22, 34, 14, 18, 8, 34, 22, 12, 70, 14, 18, 8, 10]):
     ws.column_dimensions[col].width = w

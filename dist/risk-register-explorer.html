@@ -8,7 +8,7 @@
   request (default-src 'none', connect-src 'none') and only run the one script and
   stylesheet embedded in this file (identified by their SHA-256 hashes).
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-D5qCx0CDa7kwAnY084ITmGEV7c9PRKhwMliQiLDrTj4='; style-src 'sha256-+tkOk5aEjk0Dx2s9Dw4oEIsrjlXdyVdHio2ZqvjhB4w='; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-bu5Ph9r08hymYRSSsxXw1Hdcomei/r1/bcOx6mxC4RI='; style-src 'sha256-R5HR6UEaBqJPyDPUsTvQk3t56E7CmOzhdlVMiXQa0U4='; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Risk Register Explorer</title>
@@ -351,6 +351,18 @@ code.excerpt { display: block; font: 12px/1.45 var(--mono); background: var(--su
 .form textarea, .form select { border: 1px solid var(--border-2); border-radius: 8px; padding: 7px 10px; background: var(--surface); color: var(--text); font: inherit; } .form select { height: 36px; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 14px; max-height: 160px; overflow: auto; font-size: 13px; color: var(--text); } .form-err { color: var(--i-consistency); font-weight: 550; min-height: 18px; }
 .preview { max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; } .preview td { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; }
+
+/* ---- “not relevant” risks and the “Hide not relevant” toggle ---- */
+.tag.nr { background: color-mix(in srgb, var(--medium) 22%, var(--surface)); color: color-mix(in srgb, var(--medium) 30%, var(--text-2)); }
+.rrow.nr { background: color-mix(in srgb, var(--medium) 9%, var(--surface)); } .rrow.nr .rrow-text { color: var(--muted); }
+.rrow.nr:hover { background: color-mix(in srgb, var(--medium) 15%, var(--surface)); }
+.stat-tot { font-size: 12.5px; font-weight: 550; color: var(--muted); margin-left: 6px; }
+.nr-toggle { gap: 7px; } .nr-toggle .muted { font-weight: 500; }
+.nr-box { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--border-2); color: var(--surface); }
+.nr-toggle.on .nr-box { background: var(--accent); border-color: var(--accent); }
+.nr-toggle.flash { animation: nr-flash .55s ease-in-out 3; }
+@keyframes nr-flash { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); } }
+@media (prefers-reduced-motion: reduce) { .nr-toggle.flash { animation: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); } }
 </style>
 </head>
 <body>
@@ -850,6 +862,7 @@ const ISSUE_TYPES = {
   W_MULTI_GROUP: ['warning', 'Mitigation item listed in more than one group', 'The same RMI ID is listed in the “RMI ID” column of several Risk Mitigation Groups.'],
   W_NO_ITEMS: ['warning', 'Treatment without mitigation items', 'The risk is to be mitigated but its “RMI ID” cell lists no mitigation item.'],
   W_MISSING: ['warning', 'Missing value', 'A cell that is normally filled in is empty.'],
+  W_RELEVANCE: ['warning', '“Threat relevance” resembles “not relevant”', 'Only the words “not relevant” (any case, anywhere in the text) mark a risk as not relevant. This text only resembles them, so the risk counts as relevant and “Hide not relevant” does not hide it.'],
   W_AFTER_HIGHER: ['warning', 'Risk index is higher after treatment', 'The residual risk index exceeds the initial one.'],
   W_UNUSED_GROUP: ['warning', 'Group not used by any risk', 'None of the RMIs listed by this group is linked to a risk.'],
   W_UNUSED_ASSUMPTION: ['warning', 'Assumption not referenced by any risk', 'No risk lists this assumption under “Related assumptions”.'],
@@ -897,6 +910,24 @@ function parseEnum(raw, list) {
 
 /** Loose form of an RMI ID, used only to recognise a mis-typed reference (case, spaces, dash variants). */
 const looseId = (s) => s.toLowerCase().replace(/[\u2010-\u2015\u2212_]/g, '-').replace(/\s+/g, '');
+/**
+ * “Threat relevance” of a risk (one value per risk row; despite its name it says whether the RISK is relevant).
+ * Not relevant = the words “not relevant” anywhere in the text (any case). Anything else counts as relevant; a text that
+ * only resembles “not relevant” (“Not relevent”, “not-relevant”, “no relevant”…) is returned as `typo` and NOT hidden.
+ */
+function relevanceOf(raw) {
+  if (!raw) return { notRelevant: false, typo: null };
+  if (/\bnot\s+relevant\b/i.test(raw)) return { notRelevant: true, typo: null };
+  const w = raw.toLowerCase().replace(/[^a-z]+/g, ' ').trim().split(' ');
+  for (let i = 0; i < w.length; i++) {
+    if (/^no[nt]?rel/.test(w[i]) && levenshtein(w[i], 'notrelevant') <= 2) return { notRelevant: false, typo: w[i] };
+    if (/^no[nt]?$/.test(w[i]) && w[i + 1] && /^rel/.test(w[i + 1]) && levenshtein(w[i + 1], 'relevant') <= 2) return { notRelevant: false, typo: w[i] + ' ' + w[i + 1] };
+  }
+  return { notRelevant: false, typo: null };
+}
+/** “Only not relevant”: a risk that is not relevant, or an object (threat, RMI, group, component…) whose risks all are. */
+function onlyNotRelevant(o) { if (o.type === 'risk') return !!o.notRelevant; const rs = o.risks || []; return rs.length > 0 && rs.every((r) => r.notRelevant); }
+
 /** “RMI-001”, or “RMI 17” for IDs that do not say RMI themselves. */
 const rmiName = (m) => (/^rmi/i.test(m.id) ? m.id : 'RMI ' + m.id);
 
@@ -1108,7 +1139,7 @@ function buildModel(wb, fileInfo) {
     R = columns(riskSheet, {
       threatId: [(n) => /^threat id$/.test(n), 'Threat ID', true],
       threat: [(n) => /^threat$/.test(n), 'Threat', true],
-      relevance: [(n) => /^threat relevance/.test(n), 'Threat relevance', false],
+      relevance: [(n) => /^threat relevance/.test(n), 'Threat relevance', false], // per RISK: is this risk relevant
       riskId: [(n) => /^risk id$/.test(n), 'Risk ID', true],
       description: [(n) => /^risk description/.test(n), 'Risk description', true],
       component: [(n) => /^affected components?$/.test(n), 'Affected component', true],
@@ -1132,7 +1163,7 @@ function buildModel(wb, fileInfo) {
     let cur = null;
     const seenCombo = new Set();
 
-    function getThreat(tId, tName, rel, r) {
+    function getThreat(tId, tName, r) {
       const mName = /^G\s*0\s*\.\s*(\d{1,3})\b[\s:.\u2013-]*(.*)$/i.exec(tName);
       const mId = /^T\.([A-Za-z]+)\.(\d+)$/.exec(tId);
       const key = tId || (mName ? 'G 0.' + mName[1] : tName);
@@ -1143,10 +1174,9 @@ function buildModel(wb, fileInfo) {
       if (t) {
         if (firstTime && mismatch) addIssue('C_THREAT_MISMATCH', 'Threat ID ' + tId + ' refers to number ' + mId[2] + ', but the threat name in this row starts with G 0.' + mName[1] + '. The row is filed under ' + t.id + '.', { sheet: name, row: r, col: R.threat, on: [t] });
         else if (firstTime && tName && t.name && looseKey(tName) !== looseKey(t.name)) addIssue('W_THREAT_NAME_VARIES', 'Threat ' + t.id + ' is named “' + tName + '” here but “' + t.name + '” in row ' + (t.row + 1) + '.', { sheet: name, row: r, col: R.threat, on: [t] });
-        if (rel && !t.relevance) t.relevance = rel;
         return t;
       }
-      t = { type: 'threat', id: key, name: tName, title: mName ? mName[2].trim() : tName, num: mName ? +mName[1] : (mId && /^bsi$/i.test(mId[1]) ? +mId[2] : null), relevance: rel, risks: [], issues: [], sheet: name, row: r };
+      t = { type: 'threat', id: key, name: tName, title: mName ? mName[2].trim() : tName, num: mName ? +mName[1] : (mId && /^bsi$/i.test(mId[1]) ? +mId[2] : null), risks: [], issues: [], sheet: name, row: r };
       M.threats.push(t); M.by.threat.set(key, t);
       if (!tId) addIssue('F_MISSING_ID', 'Threat “' + truncate(tName, 60) + '” has no Threat ID.', { sheet: name, row: r, col: R.threatId, on: [t] });
       else if (!CFG.patterns.threatId.test(tId)) addIssue('F_ID', 'Threat ID “' + tId + '” does not match the pattern T.BSI.<number>.', { sheet: name, row: r, col: R.threatId, on: [t] });
@@ -1164,7 +1194,7 @@ function buildModel(wb, fileInfo) {
       const freqRaw = cell(r, R.freq), effectRaw = cell(r, R.effect), rmiRaw = cell(r, R.rmiIds), categoryRaw = cell(r, R.category);
       const hasRisk = !!(rId || description || compRaw || freqRaw || effectRaw || rmiRaw || categoryRaw);
       if (!tId && !tName && !hasRisk) continue;
-      if (tId || tName) cur = getThreat(tId, tName, rel, r);
+      if (tId || tName) cur = getThreat(tId, tName, r);
       if (!hasRisk) continue;
       report(riskSheet).rows++;
       const risk = {
@@ -1174,6 +1204,7 @@ function buildModel(wb, fileInfo) {
         save: cell(r, R.save), categoryRaw, category: null, rmiRaw, items: [],
         freqAfterRaw: cell(r, R.freqAfter), effectAfterRaw: cell(r, R.effectAfter), freqAfter: null, effectAfter: null,
         indexAfter: null, indexAfterCell: rawNum(r, R.indexAfter), indexAfterCalc: null, reduction: rawNum(r, R.reduction), reductionRaw: cell(r, R.reduction),
+        relevanceRaw: rel, notRelevant: false,
         groups: [], issues: [], sheet: name, row: r,
       };
       M.risks.push(risk);
@@ -1185,6 +1216,12 @@ function buildModel(wb, fileInfo) {
       if (rId && M.by.risk.has(rId)) addIssue('C_DUP_ID', 'Risk ID “' + rId + '” is used more than once (also in row ' + (M.by.risk.get(rId).row + 1) + ').', { sheet: name, row: r, col: R.riskId, on: [risk, M.by.risk.get(rId)] });
       else if (rId) M.by.risk.set(rId, risk);
       if (!description) addIssue('W_MISSING', 'Risk ' + risk.id + ' has no description.', { sheet: name, row: r, col: R.description, on: [risk] });
+      if (R.relevance != null) {
+        const rv = relevanceOf(rel);
+        risk.notRelevant = rv.notRelevant;
+        if (!rel) addIssue('W_MISSING', 'Risk ' + risk.id + ' has no “Threat relevance”; it counts as relevant.', { sheet: name, row: r, col: R.relevance, on: [risk] });
+        else if (rv.typo) addIssue('W_RELEVANCE', 'Risk ' + risk.id + ': “Threat relevance” contains “' + rv.typo + '”, which looks like “not relevant” but is not written so. The risk counts as relevant and is not hidden.', { sheet: name, row: r, col: R.relevance, excerpt: rel, on: [risk] });
+      }
       if (!compRaw) addIssue('W_MISSING', 'Risk ' + risk.id + ' has no affected component.', { sheet: name, row: r, col: R.component, on: [risk] });
       else rawComponents.push({ raw: compRaw, risk });
 
@@ -1404,11 +1441,13 @@ const state = {
   file: null, handle: null, view: 'overview', drawer: [], expanded: new Set(),
   ui: {
     matrix: { show: 'risks', when: 'before', f: {} },
-    risks: { f: {}, group: 'threat', sort: 'index' },
-    mit: { tab: 'groups', q: '', only: 'all' },
+    /* hideNR: “Hide not relevant” of each view (on at start, independent per view / tab) */
+    risks: { f: {}, group: 'threat', sort: 'index', hideNR: true },
+    threats: { hideNR: true },
+    mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true },
     asm: { q: '' },
     comp: { when: 'before' },
-    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: [], pending: [] },
+    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: [], pending: [], hideNR: true, hideNRFlash: false },
     issues: { cats: new Set(), q: '', by: 'type' },
   },
 };
@@ -1524,14 +1563,32 @@ function validityBadge(v) {
   return h('span.validity' + (yes ? '.yes' : no ? '.no' : ''), yes ? icon('check', 12) : no ? icon('close', 12) : null, v);
 }
 
+/* ---- “not relevant” (column “Threat relevance” of a risk) ------------------------------------------ */
+function nrTag(r) { return h('span.tag.nr', { tip: 'Not relevant — “Threat relevance”: ' + truncate(r.relevanceRaw, 200) }, 'not relevant'); }
+/** Relevant risks first, not-relevant ones at the end (stable otherwise). */
+const nrLast = (list, key) => list.slice().sort((a, b) => !!(key ? key(a) : a).notRelevant - !!(key ? key(b) : b).notRelevant);
+/**
+ * “Hide not relevant” toggle of one view: ui[key] is the state, `hiddenText` says what it hides right now. When the
+ * filter was switched off automatically (ui[key + 'Flash']), the button is highlighted once.
+ */
+function nrToggle(ui, key, hiddenText, onchange) {
+  const on = !!ui[key], flash = !!ui[key + 'Flash'];
+  ui[key + 'Flash'] = false;
+  return h('button.btn.nr-toggle' + (on ? '.on' : '') + (flash ? '.flash' : ''), {
+    type: 'button', id: 'nr-' + key, 'aria-pressed': String(on),
+    tip: (on ? 'On: ' : 'Off: ') + 'hides objects whose risks are all “not relevant” (column “Threat relevance”: the words “not relevant” anywhere in the text). Click to ' + (on ? 'show them.' : 'hide them.'),
+    onclick: () => { ui[key] = !on; onchange(); },
+  }, h('span.nr-box', on ? icon('check', 11) : null), 'Hide not relevant', on && hiddenText ? h('span.muted.small', '· ' + hiddenText) : null);
+}
+
 /* ---- rows & cards ------------------------------------------------------------------ */
 function riskRow(r, extra) {
-  return h('button.rrow', { type: 'button', onclick: (e) => { e.stopPropagation(); openObj(r); }, tip: 'Open ' + r.id },
-    h('span.rrow-id', r.id), h('span.rrow-text', r.description || '—'), extra || null, issueBadges(r.issues), pillPair(r));
+  return h('button.rrow' + (r.notRelevant ? '.nr' : ''), { type: 'button', onclick: (e) => { e.stopPropagation(); openObj(r); }, tip: 'Open ' + r.id },
+    h('span.rrow-id', r.id), h('span.rrow-text', r.description || '—'), r.notRelevant ? nrTag(r) : null, extra || null, issueBadges(r.issues), pillPair(r));
 }
 function riskList(risks, limit) {
   if (!risks.length) return h('div.muted.small', 'None');
-  const sorted = risks.slice().sort((a, b) => (b.index || 0) - (a.index || 0) || natCmp(a.id, b.id));
+  const sorted = nrLast(risks.slice().sort((a, b) => (b.index || 0) - (a.index || 0) || natCmp(a.id, b.id)));
   const box = h('div.rrows');
   const draw = (n) => {
     clear(box);
@@ -1608,6 +1665,18 @@ function miniMatrix(r) {
   }
   return h('div.mini-wrap', g, h('div.mini-leg', h('span', h('i.mk.before'), 'before'), h('span', h('i.mk.after'), 'after')));
 }
+/** Stat boxes of a group: relevant value, total (incl. not relevant) in brackets; hover explains both. */
+function relevanceStats(g) {
+  const rel = g.risks.filter((r) => !r.notRelevant), relItems = g.rmis.filter((m) => !onlyNotRelevant(m)), nrN = g.risks.length - rel.length;
+  const box = (main, total, label, tip) => h('div.stat', { tip }, h('b', main, h('span.stat-tot', '(' + total + ')')), label + ' (total)');
+  const mx = (list, f) => maxOf(list, f), num = (v) => (v == null ? '–' : String(v));
+  const idx = (f, what) => box(pill(mx(rel, f)), num(mx(g.risks, f)), 'highest index ' + what,
+    'Highest risk index ' + what + ' treatment: ' + num(mx(rel, f)) + ' among the relevant risks · ' + num(mx(g.risks, f)) + ' including not relevant');
+  return h('div.stats',
+    box(String(relItems.length), g.rmis.length, 'mitigation items', relItems.length + ' mitigation items not only linked to not-relevant risks · ' + g.rmis.length + ' including those linked only to not-relevant risks'),
+    box(String(rel.length), g.risks.length, 'relevant risks addressed', plural(rel.length, 'relevant risk') + ' · ' + g.risks.length + ' including not relevant' + (nrN ? ' (' + nrN + ' not relevant)' : '')),
+    idx((r) => r.index, 'before'), idx((r) => r.residual, 'after'));
+}
 function itemGroups(o) {
   if (o.groups.length) return o.groups.map((g) => chip(g));
   return h('span.tag.bad', { tip: 'Consistency error: no Risk Mitigation Group lists this RMI ID' }, 'no group');
@@ -1621,6 +1690,7 @@ const DETAIL = {
       section('Context', h('div.fields',
         field('Threat', r.threat ? chip(r.threat, { label: true }) : null),
         field('Affected component', r.components.map((c) => chip(c))),
+        M.cols.risk && M.cols.risk.relevance != null ? field('Relevance', r.relevanceRaw ? [r.notRelevant ? nrTag(r) : null, h('span.text', r.relevanceRaw)] : null) : null,
         field('Core values at risk', r.coreValues.length ? ciaBadges(r.coreValues, true) : null),
         field('Related assumptions', r.assumptions.length ? h('div.chips.col', r.assumptions.map((a) => chip(a, { label: true }))) : null))),
       section('Treatment', h('div',
@@ -1638,7 +1708,6 @@ const DETAIL = {
     return h('div.detail',
       ctx.inline ? null : h('p.lead', t.name || h('span.muted', 'No threat name')),
       h('div.fields',
-        field('Threat relevance', t.relevance ? h('span.text', t.relevance) : null),
         field('BSI catalogue', cat ? [h('span', 'G 0.' + cat.n + ' ' + cat.name + ' '), h('span.muted.small', '— core values primarily affected: '), ciaBadges(cat.cia)] : h('span.muted', 'Not an elementary threat of the BSI catalogue')),
         field('Core values in the risks', used.length ? ciaBadges(used) : null),
         field('Components affected', comps.map((c) => chip(c)))),
@@ -1653,7 +1722,7 @@ const DETAIL = {
         : h('p.note', icon('warning', 12), 'RMI ID “' + m.id + '” is not in “' + (M.sheetNames.rmi || 'Risk mitigations individual') + '”, so it has no text. Add a row with this ID there, or correct the ID where it is used.'),
       h('div.fields',
         field('Mitigation group', m.groups.length ? h('div.chips.col', m.groups.map((g) => h('span.chips', chip(g, { label: true }), status(g)))) : h('span.tag.bad', 'no group'))),
-      section('Used in risks', m.occ.length ? h('div.rrows', m.occ.map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + ' of “RMI ID”' + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', 'No risk lists this RMI ID.'), { count: m.risks.length }),
+      section('Used in risks', m.occ.length ? h('div.rrows', nrLast(m.occ, (o) => o.risk).map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + ' of “RMI ID”' + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', 'No risk lists this RMI ID.'), { count: m.risks.length }),
       m.listed.length ? section('Listed by groups', h('div.chips.col', m.listed.map((i) => h('span.chips', chip(i.group, { label: true }), h('span.muted.small', 'line ' + i.line + ' of “RMI ID”')))), { count: m.listed.length }) : null,
       issuesSection(m), m.base ? sourceLine(m) : null);
   },
@@ -1661,9 +1730,7 @@ const DETAIL = {
     const comps = uniq(g.risks.flatMap((r) => r.components));
     return h('div.detail',
       ctx.inline ? null : h('p.lead', g.name || h('span.muted', 'No group name')),
-      h('div.stats',
-        h('div.stat', h('b', g.rmis.length), 'mitigation items'), h('div.stat', h('b', g.risks.length), 'risks addressed'),
-        h('div.stat', h('b', pill(maxOf(g.risks, (r) => r.index))), 'highest index before'), h('div.stat', h('b', pill(maxOf(g.risks, (r) => r.residual))), 'highest index after')),
+      relevanceStats(g),
       h('div.fields', field('Risk treatment', g.treatment ? h('span.text', g.treatment) : null), field('Components protected', comps.map((c) => chip(c)))),
       section('Mitigation items', h('div',
         g.items.length ? h('ul.items', g.items.map((i) => h('li.item', itemButton(i.rmi),
@@ -1723,7 +1790,9 @@ function renderDrawer(focus) {
   if (top.obj) {
     const o = top.obj, t = TYPES[o.type];
     head = h('header.dr-head.t-' + o.type, back, h('span.obj-ico', icon(t.icon, 16)), h('div.dr-title', h('span.dr-type', t.label), h('span.dr-id', objLabel(o))),
-      issueBadges(o.issues), h('button.btn.ghost.sm', { type: 'button', tip: 'Show this object and everything linked to it in the Connections view', onclick: () => { state.ui.flow.focus = [[o]]; state.ui.flow.pending = []; if (!state.ui.flow.cols.includes(o.type)) state.ui.flow.cols = FLOW_ORDER.filter((x) => state.ui.flow.cols.includes(x) || x === o.type); closeDrawer(); go('connections', true); } }, icon('flow', 13), 'Connections'), editButtons(o), close);
+      issueBadges(o.issues), h('button.btn.ghost.sm', { type: 'button', tip: 'Show this object and everything linked to it in the Connections view', onclick: () => { state.ui.flow.focus = [[o]]; state.ui.flow.pending = [];
+        if (state.ui.flow.hideNR && onlyNotRelevant(o)) { state.ui.flow.hideNR = false; state.ui.flow.hideNRFlash = true; } /* would be hidden: show it and highlight the toggle */
+        if (!state.ui.flow.cols.includes(o.type)) state.ui.flow.cols = FLOW_ORDER.filter((x) => state.ui.flow.cols.includes(x) || x === o.type); closeDrawer(); go('connections', true); } }, icon('flow', 13), 'Connections'), editButtons(o), close);
     body = detailBody(o, {});
     const hs = historySection(o);
     if (hs) body.append(hs);
@@ -2054,7 +2123,7 @@ VIEWS.matrix = function () {
 /* =============================== RISKS =============================== */
 function riskCard(r) {
   return objCard(r, {
-    main: [r.components.map((c) => h('span.meta-comp', icon('component', 12), c.name)), ciaBadges(r.coreValues), catTag(r),
+    main: [r.notRelevant ? nrTag(r) : null, r.components.map((c) => h('span.meta-comp', icon('component', 12), c.name)), ciaBadges(r.coreValues), catTag(r),
       h('span.meta-n', { tip: 'Individual mitigation items' }, icon('rmi', 12), String(r.items.length)),
       r.assumptions.length ? h('span.meta-n', { tip: 'Related assumptions' }, icon('assumption', 12), String(r.assumptions.length)) : null],
     side: pillPair(r),
@@ -2062,15 +2131,17 @@ function riskCard(r) {
 }
 VIEWS.risks = function () {
   const ui = state.ui.risks;
-  const controls = h('div.controls'), list = h('div.list'), info = h('div.list-info');
+  const controls = h('div.controls'), list = h('div.list'), info = h('div.list-info'), nrSlot = h('div.ctl');
   const draw = () => {
-    const risks = applyRiskFilter(M.risks, ui.f);
+    const matching = applyRiskFilter(M.risks, ui.f), nrN = ui.hideNR ? matching.filter((r) => r.notRelevant).length : 0;
+    const risks = ui.hideNR ? matching.filter((r) => !r.notRelevant) : matching;
+    fill(nrSlot, nrToggle(ui, 'hideNR', plural(nrN, 'risk') + ' hidden', draw));
     const sorters = {
       index: (a, b) => (b.index || 0) - (a.index || 0), after: (a, b) => (b.residual || 0) - (a.residual || 0),
       reduction: (a, b) => ((b.index || 0) - (b.residual || 0)) - ((a.index || 0) - (a.residual || 0)), id: () => 0,
     };
     risks.sort((a, b) => sorters[ui.sort](a, b) || natCmp(a.id, b.id));
-    fill(info, risks.length + ' of ' + M.risks.length + ' risks');
+    fill(info, risks.length + ' of ' + M.risks.length + ' risks' + (nrN ? ' (' + nrN + ' not relevant hidden)' : ''));
     clear(list);
     if (!risks.length) { list.append(emptyState('No risks match the filters')); return; }
     if (ui.group === 'none') { risks.forEach((r) => list.append(riskCard(r))); return; }
@@ -2089,7 +2160,7 @@ VIEWS.risks = function () {
   const drawControls = () => {
     fill(controls, 
       searchBox('Search risks…', ui.f.q, (v) => { ui.f.q = v; draw(); }),
-      riskFilterControls(ui.f, () => { drawControls(); draw(); }, { levels: true }),
+      riskFilterControls(ui.f, () => { drawControls(); draw(); }, { levels: true }), nrSlot,
       h('div.ctl.grow'),
       h('div.ctl', h('span.ctl-l', 'Group by'), segmented([{ value: 'threat', label: 'Threat' }, { value: 'component', label: 'Component' }, { value: 'category', label: 'Treatment' }, { value: 'none', label: 'None' }], ui.group, (v) => { ui.group = v; drawControls(); draw(); }, 'Group by')),
       selectBox('Sort', [{ value: 'index', label: 'Index before ↓' }, { value: 'after', label: 'Index after ↓' }, { value: 'reduction', label: 'Reduction ↓' }, { value: 'id', label: 'Risk ID' }], ui.sort, (v) => { ui.sort = v; draw(); }, true));
@@ -2104,24 +2175,31 @@ VIEWS.threats = function () {
   const tiles = h('div.tgrid');
   for (const c of BSI_THREATS) {
     const t = byNum.get(c.n);
-    const st = t ? (t.risks.length ? 'used' : 'listed') : 'absent';
+    /* a threat whose risks are all “not relevant” is shown as “listed, no risks” (always, whatever the filter) */
+    const nrOnly = !!t && onlyNotRelevant(t), st = t ? (t.risks.length && !nrOnly ? 'used' : 'listed') : 'absent';
     const mxB = t ? maxOf(t.risks, (r) => r.index) : null, mxA = t ? maxOf(t.risks, (r) => r.residual) : null;
     tiles.append(h((t ? 'button' : 'div') + '.ttile.' + st, {
       type: t ? 'button' : null, onclick: t ? () => openObj(t) : null,
-      tip: 'G 0.' + c.n + ' ' + c.name + '\nCore values primarily affected (BSI 200-3): ' + c.cia.join(', ') + '\n' + (st === 'used' ? plural(t.risks.length, 'risk') + ' in the analysis' : st === 'listed' ? 'Listed in the workbook without risks' + (t.relevance ? ': ' + truncate(t.relevance, 120) : '') : 'Not part of the workbook'),
+      tip: 'G 0.' + c.n + ' ' + c.name + '\nCore values primarily affected (BSI 200-3): ' + c.cia.join(', ') + '\n' + (st === 'used' ? plural(t.risks.length, 'risk') + ' in the analysis' : nrOnly ? 'Only not-relevant risks (' + t.risks.length + ')' : st === 'listed' ? 'Listed in the workbook without risks' : 'Not part of the workbook'),
     }, h('span.ttile-n', 'G 0.' + c.n), h('span.ttile-t', c.name),
-      st === 'used' ? h('span.ttile-f', h('span.muted', plural(t.risks.length, 'risk')), h('span.pill-pair', pill(mxB), icon('arrow', 10), pill(mxA))) : h('span.ttile-f.muted', st === 'listed' ? 'no risks' : 'not analysed')));
+      st === 'used' ? h('span.ttile-f', h('span.muted', plural(t.risks.length, 'risk')), h('span.pill-pair', pill(mxB), icon('arrow', 10), pill(mxA))) : h('span.ttile-f.muted', nrOnly ? 'not relevant' : st === 'listed' ? 'no risks' : 'not analysed')));
   }
   const extra = M.threats.filter((t) => !(t.num >= 1 && t.num <= 47));
-  const used = M.threats.filter((t) => t.risks.length).sort((a, b) => (a.num || 999) - (b.num || 999) || natCmp(a.id, b.id));
+  const used = M.threats.filter((t) => t.risks.length).sort((a, b) => (a.num || 999) - (b.num || 999) || natCmp(a.id, b.id)), ui = state.ui.threats;
   const others = M.threats.filter((t) => !t.risks.length);
   const card = (t) => objCard(t, { title: t.name, main: [h('span.meta-n', icon('risk', 12), plural(t.risks.length, 'risk')), uniq(t.risks.flatMap((r) => r.components)).slice(0, 5).map((c) => h('span.meta-comp', icon('component', 12), c.name))], side: t.risks.length ? h('span.pill-pair', pill(maxOf(t.risks, (r) => r.index), 'Highest index before treatment'), icon('arrow', 11), pill(maxOf(t.risks, (r) => r.residual), 'Highest index after treatment')) : null });
+  const usedBox = h('div'), controls = h('div.controls');
+  const drawUsed = () => {
+    const shown = ui.hideNR ? used.filter((t) => !onlyNotRelevant(t)) : used, nrN = used.length - shown.length;
+    fill(controls, nrToggle(ui, 'hideNR', plural(nrN, 'threat') + ' with only not-relevant risks hidden', drawUsed));
+    fill(usedBox, h('h2.list-title', 'Threats with risks ', h('span.count', shown.length)), h('div.list', shown.map(card)));
+  };
+  drawUsed();
   return h('div.view',
     viewHead('Threats', 'Coverage of the 47 elementary threats of the IT-Grundschutz Compendium, and the threats analysed in the workbook.'),
-    cardBox('Elementary threat coverage', used.filter((t) => t.num >= 1 && t.num <= 47).length + ' of 47 elementary threats have risks · pills show the highest risk index before → after treatment',
-      h('div', tiles, h('div.legend', h('span.legend-i', h('i.sw.tt-used'), 'analysed with risks'), h('span.legend-i', h('i.sw.tt-listed'), 'listed, no risks'), h('span.legend-i', h('i.sw.tt-absent'), 'not in the workbook')))),
-    h('h2.list-title', 'Threats with risks ', h('span.count', used.length)),
-    h('div.list', used.map(card)),
+    cardBox('Elementary threat coverage', used.filter((t) => t.num >= 1 && t.num <= 47 && !onlyNotRelevant(t)).length + ' of 47 elementary threats have relevant risks · pills show the highest risk index before → after treatment',
+      h('div', tiles, h('div.legend', h('span.legend-i', h('i.sw.tt-used'), 'analysed with risks'), h('span.legend-i', h('i.sw.tt-listed'), 'listed, no relevant risks'), h('span.legend-i', h('i.sw.tt-absent'), 'not in the workbook')))),
+    controls, usedBox,
     others.length ? [h('h2.list-title', 'Threats listed without risks ', h('span.count', others.length)), h('div.list', others.map(card))] : null,
     extra.length ? h('p.note', icon('info', 12), plural(extra.length, 'threat') + ' outside the BSI catalogue numbering: ' + extra.map((t) => t.id).join(', ')) : null);
 };
@@ -2149,16 +2227,19 @@ function groupCard(g) {
 }
 VIEWS.mitigations = function () {
   const ui = state.ui.mit;
-  const body = h('div'), controls = h('div.controls');
+  const body = h('div'), controls = h('div.controls'), nrSlot = h('div.ctl');
   const unassigned = M.rmis.filter((m) => m.occ.length && !m.groups.length);
+  /* “Hide not relevant”, separately per tab: hides groups / items whose risks are all not relevant (unused ones stay) */
   const draw = () => {
     clear(body);
     if (ui.tab === 'groups') {
+      const groups = ui.hideNRg ? M.groups.filter((g) => !onlyNotRelevant(g)) : M.groups;
+      fill(nrSlot, nrToggle(ui, 'hideNRg', plural(M.groups.length - groups.length, 'group') + ' hidden', draw));
       if (!M.groups.length) { body.append(emptyState('No mitigation groups found', 'The workbook has no “Risk Mitigation Groups” sheet or it is empty.')); }
       else {
-        const rows = M.groups.slice().sort((a, b) => b.risks.length - a.risks.length || natCmp(a.id, b.id)).map((g) => ({ label: [h('b', g.id), ' ', truncate(g.name, 34)], value: g.risks.length, tip: g.id + ' — ' + g.name + '\n' + plural(g.rmis.length, 'item') + ', ' + plural(g.risks.length, 'risk') + ' addressed', onclick: () => openObj(g) }));
+        const rows = groups.slice().sort((a, b) => b.risks.length - a.risks.length || natCmp(a.id, b.id)).map((g) => ({ label: [h('b', g.id), ' ', truncate(g.name, 34)], value: g.risks.length, tip: g.id + ' — ' + g.name + '\n' + plural(g.rmis.length, 'item') + ', ' + plural(g.risks.length, 'risk') + ' addressed', onclick: () => openObj(g) }));
         body.append(cardBox('Reach of each group', 'Number of risks addressed by the mitigation items of each group', barList(rows), 'wide-labels'));
-        body.append(h('h2.list-title', 'Mitigation groups ', h('span.count', M.groups.length)), h('div.list', M.groups.map(groupCard)));
+        body.append(h('h2.list-title', 'Mitigation groups ', h('span.count', groups.length)), h('div.list', groups.map(groupCard)));
       }
       if (unassigned.length) {
         add(body, h('h2.list-title', 'Used by risks but not in any group ', h('span.count', unassigned.length), h('span.ibadge.cat-consistency', { tip: 'Consistency error: every mitigation item used by a risk must be listed by a group' }, icon('consistency', 12))),
@@ -2171,7 +2252,10 @@ VIEWS.mitigations = function () {
       else if (ui.only === 'issues') items = items.filter((m) => m.issues.some((i) => i.cat !== 'warning'));
       else if (ui.only === 'orphan') items = items.filter((m) => !m.occ.length);
       else if (ui.only === 'shared') items = items.filter((m) => m.risks.length > 1);
-      body.append(h('div.list-info', items.length + ' of ' + M.rmis.length + ' mitigation items'));
+      const nrN = ui.hideNRi ? items.filter(onlyNotRelevant).length : 0;
+      if (ui.hideNRi) items = items.filter((m) => !onlyNotRelevant(m));
+      fill(nrSlot, nrToggle(ui, 'hideNRi', plural(nrN, 'item') + ' hidden', draw));
+      body.append(h('div.list-info', items.length + ' of ' + M.rmis.length + ' mitigation items' + (nrN ? ' (' + nrN + ' linked only to not-relevant risks hidden)' : '')));
       const list = h('div.list');
       const show = (n) => { clear(list); items.slice(0, n).forEach((m) => list.append(rmiCard(m))); if (items.length > n) list.append(h('button.more', { type: 'button', onclick: () => show(n + 300) }, 'Show more (' + (items.length - n) + ' remaining)')); if (!items.length) list.append(emptyState('No mitigation items match')); };
       show(150);
@@ -2179,7 +2263,7 @@ VIEWS.mitigations = function () {
     }
   };
   const drawControls = () => {
-    fill(controls, segmented([{ value: 'groups', label: 'Groups', icon: 'group' }, { value: 'items', label: 'All items', icon: 'rmi' }], ui.tab, (v) => { ui.tab = v; drawControls(); draw(); }, 'View'));
+    fill(controls, segmented([{ value: 'groups', label: 'Groups', icon: 'group' }, { value: 'items', label: 'All items', icon: 'rmi' }], ui.tab, (v) => { ui.tab = v; drawControls(); draw(); }, 'View'), nrSlot);
     if (ui.tab === 'items') controls.append(searchBox('Search mitigation items…', ui.q, (v) => { ui.q = v; draw(); }),
       segmented([{ value: 'all', label: 'All' }, { value: 'unassigned', label: 'Without group' }, { value: 'shared', label: 'Used by several risks' }, { value: 'issues', label: 'With errors' }, { value: 'orphan', label: 'Not linked to any risk' }], ui.only, (v) => { ui.only = v; drawControls(); draw(); }, 'Filter'));
   };
@@ -2282,7 +2366,15 @@ VIEWS.connections = function () {
     const T = ui.focus, F = T.flat(), f = F.length > 0, single = F.length === 1;
     const byType = (t) => F.filter((o) => o.type === t);
     const cols = FLOW_ORDER.filter((t) => ui.cols.includes(t));
-    let riskSet = M.risks, rmiSet = null, groupSet = null;
+    /* “Hide not relevant”: not-relevant risks leave the view, and threats whose risks are all not relevant;
+       every other column keeps its objects (only links through hidden risks disappear). */
+    const baseRisks = ui.hideNR ? M.risks.filter((r) => !r.notRelevant) : M.risks;
+    if (f && ui.hideNR && F.some(onlyNotRelevant)) {
+      host.append(emptyState('The focus contains objects hidden by “Hide not relevant”', 'Their risks are all not relevant (column “Threat relevance”). Switch the filter off to show them.'),
+        h('p', h('button.btn', { type: 'button', id: 'nr-show', onclick: () => { ui.hideNR = false; ui.hideNRFlash = true; drawControls(); draw(); } }, 'Show not relevant')));
+      return;
+    }
+    let riskSet = baseRisks, rmiSet = null, groupSet = null;
     if (f) {
       for (const term of T) { const rs = new Set(term.flatMap((o) => (o.type === 'risk' ? [o] : o.risks))); riskSet = riskSet.filter((r) => rs.has(r)); }
       for (const term of T.filter((x) => x[0].type === 'group')) { const ok = new Set(term.flatMap((g) => g.rmis)); rmiSet = new Set([...(rmiSet || ok)].filter((m) => ok.has(m))); }
@@ -2301,7 +2393,7 @@ VIEWS.connections = function () {
     /* nodes per column */
     const nodes = {};
     for (const t of cols) {
-      if (!f) nodes[t] = { component: M.components, assumption: M.assumptions, threat: M.threats.filter((x) => x.risks.length), risk: M.risks, rmi: M.rmis, group: M.groups }[t].slice();
+      if (!f) nodes[t] = { component: M.components, assumption: M.assumptions, threat: M.threats.filter((x) => x.risks.length && (!ui.hideNR || !onlyNotRelevant(x))), risk: baseRisks, rmi: M.rmis, group: M.groups }[t].slice();
       else if (t === 'rmi' && rmiSet && single) nodes[t] = [...rmiSet];
       else if (t === 'group' && groupSet && single) nodes[t] = [...groupSet];
       else nodes[t] = uniq(riskSet.flatMap(rel[t]));
@@ -2447,7 +2539,8 @@ VIEWS.connections = function () {
       'Line thickness = number of risks behind a link. Items are linked to groups by the RMI IDs listed in the group’s “RMI ID” cell.'));
   };
   const drawControls = () => {
-    fill(controls, h('div.ctl', h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
+    const nrR = M.risks.filter((r) => r.notRelevant).length, nrT = M.threats.filter((t) => t.risks.length && onlyNotRelevant(t)).length;
+    fill(controls, nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); }), h('div.ctl', h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
       type: 'button', 'aria-pressed': String(ui.cols.includes(t)),
       onclick: () => { if (ui.cols.includes(t)) { if (ui.cols.length > 2) ui.cols = ui.cols.filter((x) => x !== t); } else ui.cols = ui.cols.concat(t); drawControls(); draw(); },
     }, icon(TYPES[t].icon, 13), TYPES[t].plural)))));
@@ -2526,8 +2619,8 @@ function snapshot(m) {
   return {
     risk: obj(m.risks, (r) => ({ threat: r.threat ? r.threat.id : '', description: r.description, component: r.componentRaw, coreValues: r.coreValues.join(', '),
       assumptions: r.assumptionRefs.map((a) => a.id).join(', '), frequency: r.freqRaw, effects: r.effectRaw, riskIndex: r.index, treatmentCategory: r.categoryRaw,
-      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, rmis: r.items.map((o) => o.rmi.id) })),
-    threat: obj(m.threats, (t) => ({ name: t.name, relevance: t.relevance })),
+      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, relevance: r.relevanceRaw, rmis: r.items.map((o) => o.rmi.id) })),
+    threat: obj(m.threats, (t) => ({ name: t.name })),
     assumption: obj(m.assumptions, (a) => ({ title: a.title, description: a.description, components: a.componentsRaw, validityAlpha: a.validityAlpha, validityBeta: a.validityBeta, comment: a.comment })),
     rmi: obj(m.rmis.filter((x) => x.base && !/#row/.test(x.key)), (x) => ({ text: x.text, extendedDescription: x.extDescription, comment: x.comment, responsible: x.responsible })),
     group: obj(m.groups, (g) => ({ name: g.name, treatment: g.treatment, rmis: g.items.map((i) => i.rmi.id) })),
@@ -2870,14 +2963,15 @@ const issueCount = (o, c) => o.issues.filter((i) => i.cat === c).length || '';
 const issueText = (o) => o.issues.map((i) => '[' + ISSUE_CATS[i.cat].label + '] ' + i.msg).join('\n');
 const ISSUE_COLS = [['Format errors', 9], ['Consistency errors', 11], ['Warnings', 9], ['Findings', 70]];
 const issueCells = (o) => [issueCount(o, 'format'), issueCount(o, 'consistency'), issueCount(o, 'warning'), issueText(o)];
-const filterText = (f) => Object.keys(f || {}).filter((k) => f[k]).map((k) => k + ' = ' + f[k]).join(', ') || 'none';
+const filterText = (f, hideNR) => [Object.keys(f || {}).filter((k) => f[k]).map((k) => k + ' = ' + f[k]).join(', '), hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none';
+const nrText = (r) => (r.notRelevant ? { v: 'not relevant', s: 4 } : 'relevant');
 
 const EXPORTS = {
   risks: { label: 'Risks', run() {
-    const rs = applyRiskFilter(M.risks, state.ui.risks.f);
-    return { filter: filterText(state.ui.risks.f), sheets: [
-      { name: 'Risks', cols: [['Risk ID', 12], ['Threat ID', 11], ['Threat', 30], ['Risk description', 50], ['Affected component', 18], ['Core values', 14], ['Related assumptions', 14], ['Frequency', 14], ['Effects', 16], ['Risk index', 9], ['Level', 10], ['Treatment category', 20], ['Mitigation items', 60], ['Mitigation groups', 14], ['Frequency after', 14], ['Effects after', 16], ['Risk index after', 9], ['Level after', 10], ['Risk reduction', 9]].concat(ISSUE_COLS),
-        rows: rs.map((r) => [r.id, r.threat ? r.threat.id : '', r.threat ? r.threat.name : '', r.description, r.components.map((c) => c.name).join('\n'), r.coreValues.map((k) => CFG.coreValues.find((x) => x.key === k).label).join(', '), ids(r.assumptions), r.freqRaw, r.effectRaw, num0(r.index), lvl(r.index), r.categoryRaw,
+    const rs = applyRiskFilter(M.risks, state.ui.risks.f).filter((r) => !state.ui.risks.hideNR || !r.notRelevant);
+    return { filter: filterText(state.ui.risks.f, state.ui.risks.hideNR), sheets: [
+      { name: 'Risks', cols: [['Risk ID', 12], ['Threat ID', 11], ['Threat', 30], ['Relevant', 10], ['Threat relevance', 30], ['Risk description', 50], ['Affected component', 18], ['Core values', 14], ['Related assumptions', 14], ['Frequency', 14], ['Effects', 16], ['Risk index', 9], ['Level', 10], ['Treatment category', 20], ['Mitigation items', 60], ['Mitigation groups', 14], ['Frequency after', 14], ['Effects after', 16], ['Risk index after', 9], ['Level after', 10], ['Risk reduction', 9]].concat(ISSUE_COLS),
+        rows: rs.map((r) => [r.id, r.threat ? r.threat.id : '', r.threat ? r.threat.name : '', nrText(r), r.relevanceRaw || '', r.description, r.components.map((c) => c.name).join('\n'), r.coreValues.map((k) => CFG.coreValues.find((x) => x.key === k).label).join(', '), ids(r.assumptions), r.freqRaw, r.effectRaw, num0(r.index), lvl(r.index), r.categoryRaw,
           r.items.map((o) => o.rmi.id + '  ' + rmiText(o.rmi) + (o.groups.length ? '  → ' + o.groups.map((g) => g.id).join(', ') : '  → no group')).join('\n'), ids(r.groups), r.freqAfterRaw, r.effectAfterRaw, num0(r.residual), lvl(r.residual), r.index != null && r.residual != null ? r.index - r.residual : ''].concat(issueCells(r))) },
       { name: 'Risk-item links', cols: [['Risk ID', 12], ['Line in RMI ID cell', 8], ['RMI ID', 10], ['Mitigation item', 70], ['Mitigation group(s)', 16]],
         rows: rs.flatMap((r) => r.items.map((o) => [r.id, o.line, o.rmi.id, rmiText(o.rmi), o.groups.length ? ids(o.groups) : { v: 'none — not listed by any group', s: 5 }])) }] };
@@ -2890,15 +2984,15 @@ const EXPORTS = {
       { name: 'Positions', cols: [['Risk ID', 12], ['Threat ID', 11], ['Component', 18], ['Frequency before', 14], ['Effects before', 16], ['Index before', 9], ['Level before', 10], ['Frequency after', 14], ['Effects after', 16], ['Index after', 9], ['Level after', 10], ['Moved', 8]],
         rows: rs.map((r) => { const a = posOf(r, 'before'), b = posOf(r, 'after'); return [r.id, r.threat ? r.threat.id : '', r.componentRaw, a.f ? a.f.label : '', a.e ? a.e.label : '', num0(r.index), lvl(r.index), b.f ? b.f.label : '', b.e ? b.e.label : '', num0(r.residual), lvl(r.residual), a.f === b.f && a.e === b.e ? 'no' : 'yes']; }) }] };
   } },
-  threats: { label: 'Threats', run: () => ({ sheets: [{ name: 'Threats', cols: [['Threat ID', 11], ['Elementary threat', 10], ['Threat', 40], ['Threat relevance', 40], ['BSI core values', 10], ['Risks', 7], ['Risk IDs', 14], ['Components', 20], ['Highest index before', 10], ['Highest index after', 10]].concat(ISSUE_COLS),
-    rows: M.threats.map((t) => { const c = BSI_THREATS.find((x) => x.n === t.num); return [t.id, t.num != null ? 'G 0.' + t.num : '', t.name, t.relevance, c ? c.cia.join(', ') : '', t.risks.length, ids(t.risks), uniq(t.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(t.risks, (r) => r.index)), num0(maxOf(t.risks, (r) => r.residual))].concat(issueCells(t)); }) }] }) },
-  mitigations: { label: 'Mitigations', run: () => ({ sheets: [
+  threats: { label: 'Threats', run: () => ({ filter: filterText(null, state.ui.threats.hideNR), sheets: [{ name: 'Threats', cols: [['Threat ID', 11], ['Elementary threat', 10], ['Threat', 40], ['Only not-relevant risks', 10], ['BSI core values', 10], ['Risks', 7], ['Risk IDs', 14], ['Components', 20], ['Highest index before', 10], ['Highest index after', 10]].concat(ISSUE_COLS),
+    rows: M.threats.filter((t) => !state.ui.threats.hideNR || !onlyNotRelevant(t)).map((t) => { const c = BSI_THREATS.find((x) => x.n === t.num); return [t.id, t.num != null ? 'G 0.' + t.num : '', t.name, onlyNotRelevant(t) ? 'yes' : '', c ? c.cia.join(', ') : '', t.risks.length, ids(t.risks), uniq(t.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(t.risks, (r) => r.index)), num0(maxOf(t.risks, (r) => r.residual))].concat(issueCells(t)); }) }] }) },
+  mitigations: { label: 'Mitigations', run: () => ({ filter: 'hide not relevant = ' + (state.ui.mit.hideNRg ? 'on' : 'off') + ' (groups), ' + (state.ui.mit.hideNRi ? 'on' : 'off') + ' (items)', sheets: [
     { name: 'Mitigation groups', cols: [['Group ID', 10], ['Security measure group', 30], ['Risk treatment', 22], ['Items', 7], ['Mitigation items', 70], ['Risks', 7], ['Risk IDs', 14], ['Components', 20], ['Highest index before', 10], ['Highest index after', 10]].concat(ISSUE_COLS),
-      rows: M.groups.map((g) => [g.id, g.name, g.treatment, g.rmis.length, g.rmis.map((m) => m.id + '  ' + rmiText(m)).join('\n'), g.risks.length, ids(g.risks), uniq(g.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(g.risks, (r) => r.index)), num0(maxOf(g.risks, (r) => r.residual))].concat(issueCells(g))) },
+      rows: M.groups.filter((g) => !state.ui.mit.hideNRg || !onlyNotRelevant(g)).map((g) => [g.id, g.name, g.treatment, g.rmis.length, g.rmis.map((m) => m.id + '  ' + rmiText(m)).join('\n'), g.risks.length, ids(g.risks), uniq(g.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(g.risks, (r) => r.index)), num0(maxOf(g.risks, (r) => r.residual))].concat(issueCells(g))) },
     { name: 'Mitigation items', cols: [['RMI ID', 10], ['Mitigation item', 70], ['In master list', 9], ['Groups', 12], ['In a group', 9], ['Extended Description', 40], ['Comment', 30], ['Responsible', 16], ['Risks', 7], ['Risk IDs', 14]].concat(ISSUE_COLS),
-      rows: M.rmis.map((m) => [m.id, rmiText(m), m.base ? 'yes' : { v: 'NO', s: 5 }, ids(m.groups), m.groups.length ? 'yes' : { v: 'NO', s: 5 }, m.extDescription || '', m.comment || '', m.responsible || '', m.risks.length, ids(m.risks)].concat(issueCells(m))) },
+      rows: M.rmis.filter((m) => !state.ui.mit.hideNRi || !onlyNotRelevant(m)).map((m) => [m.id, rmiText(m), m.base ? 'yes' : { v: 'NO', s: 5 }, ids(m.groups), m.groups.length ? 'yes' : { v: 'NO', s: 5 }, m.extDescription || '', m.comment || '', m.responsible || '', m.risks.length, ids(m.risks)].concat(issueCells(m))) },
     { name: 'Item-group links', cols: [['RMI ID', 10], ['Group ID', 10], ['Mitigation item', 70]],
-      rows: M.groups.flatMap((g) => g.rmis.map((m) => [m.id, g.id, rmiText(m)])) }] }) },
+      rows: M.groups.flatMap((g) => g.rmis.filter((m) => !state.ui.mit.hideNRi || !onlyNotRelevant(m)).map((m) => [m.id, g.id, rmiText(m)])) }] }) },
   assumptions: { label: 'Assumptions', run() {
     const q = state.ui.asm.q.toLowerCase();
     const as = M.assumptions.filter((a) => !q || (a.id + ' ' + a.title + ' ' + a.description + ' ' + a.componentsRaw + ' ' + a.comment).toLowerCase().includes(q));
@@ -2910,7 +3004,7 @@ const EXPORTS = {
       return [c.name, c.risks.length, ids(c.risks), ids(uniq(c.risks.map((r) => r.threat).filter(Boolean))), ids(c.assumptions), ids(uniq(c.risks.flatMap((r) => r.groups))), b.low, b.medium, b.high, a.low, a.medium, a.high, num0(maxOf(c.risks, (r) => r.index)), num0(maxOf(c.risks, (r) => r.residual))].concat(CFG.coreValues.map((v) => c.risks.filter((r) => r.coreValues.includes(v.key)).length), issueCells(c)); }) }] }) },
   connections: { label: 'Connections', run() {
     const L = flowLast || { riskSet: M.risks, nodes: {}, cols: [] }, focus = state.ui.flow.focus.map((t) => t.map((o) => objLabel(o)).join(' OR ')).join(' AND ');
-    return { filter: focus ? 'focus = ' + focus : 'none', sheets: [
+    return { filter: [focus ? 'focus = ' + focus : '', state.ui.flow.hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none', sheets: [
       { name: 'Paths', cols: [['Risk ID', 12], ['Threat', 12], ['Components', 18], ['Assumptions', 12], ['Mitigation items', 14], ['Mitigation groups', 12], ['Risk index after', 9]],
         rows: L.riskSet.map((r) => [r.id, r.threat ? r.threat.id : '', r.components.map((c) => c.name).join('\n'), ids(r.assumptions), ids(uniq(r.items.map((o) => o.rmi))), ids(r.groups), num0(r.residual)]) },
       { name: 'Objects shown', cols: [['Type', 16], ['ID', 14], ['Title', 70]], rows: L.cols.flatMap((t) => (L.nodes[t] || []).map((o) => [TYPES[t].label, objLabel(o), objTitle(o) || ''])) }] };
@@ -2921,8 +3015,8 @@ const EXPORTS = {
       const fs = Object.keys(c.fields || {});
       if (!fs.length && !c.linesAdded && !c.linesRemoved) rows.push(base.concat(['', '', '']));
       for (const k of fs) rows.push(base.concat([k, valText(c.fields[k].from), valText(c.fields[k].to)]));
-      for (const l of c.linesAdded || []) rows.push(base.concat(['mitigation line', '', l]));
-      for (const l of c.linesRemoved || []) rows.push(base.concat(['mitigation line', l, '']));
+      for (const l of c.linesAdded || []) rows.push(base.concat(['linked RMI ID', '', l]));
+      for (const l of c.linesRemoved || []) rows.push(base.concat(['linked RMI ID', l, '']));
     };
     if (hist.tab === 'compare' && hist.cmp) hist.cmp.d.changes.forEach((c) => push(hist.cmp.from + ' → ' + hist.cmp.to, '', c));
     else hist.logs.forEach((log) => log.changes.forEach((c) => push(log.createdAt, log.author || '', c)));
@@ -3022,6 +3116,7 @@ function editRisk(cs, r, v) {
   cs.set(sh, r.row, C.freqAfter, spellFreq(fa)); cs.set(sh, r.row, C.effectAfter, spellEffect(ea));
   cs.set(sh, r.row, C.category, spellCat(cat));
   if (C.save != null) cs.set(sh, r.row, C.save, v.save);
+  if (C.relevance != null) cs.set(sh, r.row, C.relevance, v.relevance);
   const changedAssess = ['freq', 'effect', 'freqAfter', 'effectAfter', 'category'].some((k) => (v[k] || '') !== (k === 'category' ? (r.category ? r.category.key : '') : (r[k] ? r[k].key : '')));
   if (changedAssess) computedRiskCells(cs, sh, r.row, C, f, e, fa, ea, cat && cat.key === 'acceptance');
 }
@@ -3053,7 +3148,7 @@ function addRmi(cs, risk, m, text, group, newId) {
 }
 function editThreat(cs, t, v) {
   const sh = M.sheetObj.risk, C = M.cols.risk, rows = uniq([t.row].concat(t.risks.map((r) => r.row)));
-  for (const row of rows) for (const [col, val] of [[C.threat, v.name], [C.relevance, v.relevance]]) {
+  for (const row of rows) for (const [col, val] of [[C.threat, v.name]]) { // “Threat relevance” belongs to each risk (editRisk)
     if (col == null || isMergeChild(sh, row, col)) continue;
     if (row === t.row || str(rawCell(sh, row, col)) !== '') cs.set(sh, row, col, val);
   }
@@ -3078,7 +3173,7 @@ function addRisk(cs, v) {
   const C = M.cols.risk, t = v.threat, vals = new Map();
   const f = CFG.freq.find((x) => x.key === v.freq), e = CFG.effect.find((x) => x.key === v.effect), fa = CFG.freq.find((x) => x.key === v.freqAfter), ea = CFG.effect.find((x) => x.key === v.effectAfter), cat = CFG.categories.find((x) => x.key === v.category);
   const i = f && e ? f.value * e.value : '', ia = fa && ea ? fa.value * ea.value : '';
-  for (const [col, val] of [[C.threatId, t.id], [C.threat, t.name], [C.relevance, t.relevance], [C.riskId, v.riskId], [C.description, v.description], [C.component, v.component], [C.core, cvText(v.core)],
+  for (const [col, val] of [[C.threatId, t.id], [C.threat, t.name], [C.relevance, v.relevance], [C.riskId, v.riskId], [C.description, v.description], [C.component, v.component], [C.core, cvText(v.core)],
     [C.assumptions, v.assumptions.map((id) => asmLine(M.by.assumption.get(id))).join('\n')], [C.freq, spellFreq(f)], [C.effect, spellEffect(e)], [C.save, v.save], [C.category, spellCat(cat)],
     [C.rmiIds, ''], [C.freqAfter, spellFreq(fa)], [C.effectAfter, spellEffect(ea)]]) if (col != null) vals.set(col, val);
   for (const [col, val] of [[C.index, i], [C.indexAfter, ia], [C.reduction, i !== '' && ia !== '' ? i - ia : ''], [C.treatment, '']]) if (col != null) vals.set(col, { computed: val });
@@ -3323,6 +3418,8 @@ function riskFields(r) {
   return [
     { key: 'description', label: 'Risk description', type: 'textarea', value: t.description || '', required: true },
     { key: 'component', label: 'Affected component', value: t.componentRaw || '', list: M.components.map((c) => c.name), required: true, help: 'Pick an existing component or type a new name.' },
+  ].concat(M.cols.risk.relevance != null ? [{ key: 'relevance', label: 'Relevance (column “Threat relevance”)', value: t.relevanceRaw || '', list: uniq(M.risks.map((x) => x.relevanceRaw).filter(Boolean)),
+    help: 'Write “not relevant” (anywhere in the text) to mark this risk as not relevant; any other text counts as relevant.' }] : []).concat([
     { key: 'core', label: 'Core values at risk', type: 'checks', options: CFG.coreValues.map((c) => ({ value: c.key, label: c.label })), value: t.coreValues || [], required: true },
     { key: 'assumptions', label: 'Related assumptions', type: 'checks', options: M.assumptions.map((a) => ({ value: a.id, label: a.id + ' ' + truncate(a.title, 70) })), value: t.assumptions ? t.assumptions.map((a) => a.id) : [] },
     { key: 'freq', label: 'Frequency of occurrence', type: 'select', options: opt(CFG.freq), value: t.freq ? t.freq.key : '', required: true },
@@ -3330,7 +3427,7 @@ function riskFields(r) {
     { key: 'category', label: 'Risk treatment category', type: 'select', options: opt(CFG.categories), value: t.category ? t.category.key : '', required: true },
     { key: 'freqAfter', label: 'Frequency after treatment', type: 'select', options: opt(CFG.freq, null, '—'), value: t.freqAfter ? t.freqAfter.key : '' },
     { key: 'effectAfter', label: 'Effects after treatment', type: 'select', options: opt(CFG.effect, null, '—'), value: t.effectAfter ? t.effectAfter.key : '' },
-  ].concat(M.cols.risk.save != null ? [{ key: 'save', label: 'Description for SAVe database', type: 'textarea', value: t.save || '' }] : []);
+  ].concat(M.cols.risk.save != null ? [{ key: 'save', label: 'Description for SAVe database', type: 'textarea', value: t.save || '' }] : []));
 }
 const checkComponent = (s) => { if (/[;,\n]/.test(s)) throw new Error('a component name must not contain “;”, “,” or line breaks'); return s; };
 function nextPadded(list) { const m = list.map((x) => /^(\D*)(\d+)$/.exec(x)).filter(Boolean); if (!m.length) return ''; const p = m[0][1], w = m[0][2].length, n = Math.max(...m.filter((x) => x[1] === p).map((x) => +x[2])) + 1; return p + String(n).padStart(w, '0'); }
@@ -3339,7 +3436,7 @@ function nextId(prefix, list) { let n = 0; for (const x of list) { const m = new
 const EDITORS = {
   risk: (r) => formDialog('Edit risk ' + r.id, riskFields(r), (v) => {
     const cs = new ChangeSet(); cs.focus = r; v.component = checkComponent(v.component); editRisk(cs, r, v); return cs; }),
-  threat: (t) => formDialog('Edit threat ' + t.id, [{ key: 'name', label: 'Threat', value: t.name, required: true, help: 'Written in every row of ' + t.id + '.' }].concat(M.cols.risk.relevance != null ? [{ key: 'relevance', label: 'Threat relevance', type: 'textarea', value: t.relevance || '' }] : []), (v) => {
+  threat: (t) => formDialog('Edit threat ' + t.id, [{ key: 'name', label: 'Threat', value: t.name, required: true, help: 'Written in every row of ' + t.id + '.' }], (v) => {
     const m = /^G 0\.(\d+) \S/.exec(v.name); if (!m) throw new Error('the threat must be written as “G 0.<number> <name>”');
     if (/^T\.BSI\.\d+$/.test(t.id) && +m[1] !== +t.id.split('.')[2]) throw new Error('the number must stay ' + t.id.split('.')[2] + ' (Threat ID ' + t.id + ')');
     const cs = new ChangeSet(); cs.focus = t; editThreat(cs, t, v); return cs; }),
@@ -3613,6 +3710,7 @@ function showMethod() {
       h('li', '“RMI ID” of a risk: the RMI IDs of its mitigation items, one per line. An ID that is not in “Risk mitigations individual” is a consistency error.'),
       h('li', '“RMI ID” of a Risk Mitigation Group: the RMI IDs of the items in the group, one per line. An item belongs to every group that lists its ID; an item used by a risk must belong to at least one group, otherwise it is a consistency error. An item that no risk uses is a warning.'),
       h('li', '“Risk treatment option” (risk analysis) and “Content” (groups) are formulas that show the texts of the RMI IDs. They are not read; the tool only warns when such a cell is not a formula.'),
+      h('li', '“Threat relevance”: one value per risk row; despite its name it says whether the RISK is relevant. A risk is not relevant when the text contains the words “not relevant” (any case, anywhere); any other text counts as relevant. An empty cell or a text that only resembles “not relevant” is a warning. “Hide not relevant” (on by default in Risks, Threats, Mitigations and Connections, each on its own) hides not-relevant risks and the threats, groups and items whose risks are all not relevant.'),
       h('li', '“Related assumptions”: assumption IDs written as A.<number>. The links of an assumption to risks are derived from this column.'),
       h('li', 'Accepted risks without an after-treatment assessment keep their initial position and index in all “after treatment” views.')),
     h('h3', 'Checks performed'),

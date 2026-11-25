@@ -102,6 +102,7 @@ const ISSUE_TYPES = {
   W_MULTI_GROUP: ['warning', 'Mitigation item listed in more than one group', 'The same RMI ID is listed in the “RMI ID” column of several Risk Mitigation Groups.'],
   W_NO_ITEMS: ['warning', 'Treatment without mitigation items', 'The risk is to be mitigated but its “RMI ID” cell lists no mitigation item.'],
   W_MISSING: ['warning', 'Missing value', 'A cell that is normally filled in is empty.'],
+  W_RELEVANCE: ['warning', '“Threat relevance” resembles “not relevant”', 'Only the words “not relevant” (any case, anywhere in the text) mark a risk as not relevant. This text only resembles them, so the risk counts as relevant and “Hide not relevant” does not hide it.'],
   W_AFTER_HIGHER: ['warning', 'Risk index is higher after treatment', 'The residual risk index exceeds the initial one.'],
   W_UNUSED_GROUP: ['warning', 'Group not used by any risk', 'None of the RMIs listed by this group is linked to a risk.'],
   W_UNUSED_ASSUMPTION: ['warning', 'Assumption not referenced by any risk', 'No risk lists this assumption under “Related assumptions”.'],

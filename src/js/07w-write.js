@@ -16,8 +16,8 @@ function snapshot(m) {
   return {
     risk: obj(m.risks, (r) => ({ threat: r.threat ? r.threat.id : '', description: r.description, component: r.componentRaw, coreValues: r.coreValues.join(', '),
       assumptions: r.assumptionRefs.map((a) => a.id).join(', '), frequency: r.freqRaw, effects: r.effectRaw, riskIndex: r.index, treatmentCategory: r.categoryRaw,
-      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, rmis: r.items.map((o) => o.rmi.id) })),
-    threat: obj(m.threats, (t) => ({ name: t.name, relevance: t.relevance })),
+      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, relevance: r.relevanceRaw, rmis: r.items.map((o) => o.rmi.id) })),
+    threat: obj(m.threats, (t) => ({ name: t.name })),
     assumption: obj(m.assumptions, (a) => ({ title: a.title, description: a.description, components: a.componentsRaw, validityAlpha: a.validityAlpha, validityBeta: a.validityBeta, comment: a.comment })),
     rmi: obj(m.rmis.filter((x) => x.base && !/#row/.test(x.key)), (x) => ({ text: x.text, extendedDescription: x.extDescription, comment: x.comment, responsible: x.responsible })),
     group: obj(m.groups, (g) => ({ name: g.name, treatment: g.treatment, rmis: g.items.map((i) => i.rmi.id) })),

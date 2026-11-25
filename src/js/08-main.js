@@ -178,6 +178,7 @@ function showMethod() {
       h('li', '“RMI ID” of a risk: the RMI IDs of its mitigation items, one per line. An ID that is not in “Risk mitigations individual” is a consistency error.'),
       h('li', '“RMI ID” of a Risk Mitigation Group: the RMI IDs of the items in the group, one per line. An item belongs to every group that lists its ID; an item used by a risk must belong to at least one group, otherwise it is a consistency error. An item that no risk uses is a warning.'),
       h('li', '“Risk treatment option” (risk analysis) and “Content” (groups) are formulas that show the texts of the RMI IDs. They are not read; the tool only warns when such a cell is not a formula.'),
+      h('li', '“Threat relevance”: one value per risk row; despite its name it says whether the RISK is relevant. A risk is not relevant when the text contains the words “not relevant” (any case, anywhere); any other text counts as relevant. An empty cell or a text that only resembles “not relevant” is a warning. “Hide not relevant” (on by default in Risks, Threats, Mitigations and Connections, each on its own) hides not-relevant risks and the threats, groups and items whose risks are all not relevant.'),
       h('li', '“Related assumptions”: assumption IDs written as A.<number>. The links of an assumption to risks are derived from this column.'),
       h('li', 'Accepted risks without an after-treatment assessment keep their initial position and index in all “after treatment” views.')),
     h('h3', 'Checks performed'),

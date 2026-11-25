@@ -99,10 +99,10 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   let base = null;
   await test('F1', 'Sample workbook: sheets recognised, Beta sheet ignored, object counts as expected', async () => {
     await load(page, FILE_T, fx('sample.xlsx')); base = await model();
-    eq(base.n, [19, 41, 42, 9, 10, 8], 'threats/risks/items/groups/assumptions/components'); assert(base.sheets.includes('Assumed Risks Beta:ignored'), 'Beta sheet not ignored: ' + base.sheets);
+    eq(base.n, [19, 41, 43, 10, 10, 8], 'threats/risks/items/groups/assumptions/components'); assert(base.sheets.includes('Assumed Risks Beta:ignored'), 'Beta sheet not ignored: ' + base.sheets);
   });
   await test('F2', 'Every seeded mistake of the sample is reported by its check', async () => {
-    const want = ['C_ASSUMPTION_UNKNOWN', 'C_DUP_ID', 'C_INDEX', 'C_NOT_IN_GROUP', 'C_RMI_UNKNOWN', 'C_REDUCTION', 'C_THREAT_MISMATCH', 'F_ASSUMPTION_REF', 'F_RMI_REF', 'F_VALUE', 'W_AFTER_HIGHER', 'W_DUP_LINE', 'W_DUP_TEXT', 'W_MISSING', 'W_MULTI_GROUP', 'W_NOT_FORMULA', 'W_SIMILAR_NAME', 'W_UNUSED_ASSUMPTION', 'W_UNUSED_GROUP', 'W_UNUSED_RMI'];
+    const want = ['C_ASSUMPTION_UNKNOWN', 'C_DUP_ID', 'C_INDEX', 'C_NOT_IN_GROUP', 'C_RMI_UNKNOWN', 'C_REDUCTION', 'C_THREAT_MISMATCH', 'F_ASSUMPTION_REF', 'F_RMI_REF', 'F_VALUE', 'W_AFTER_HIGHER', 'W_DUP_LINE', 'W_DUP_TEXT', 'W_MISSING', 'W_MULTI_GROUP', 'W_NOT_FORMULA', 'W_RELEVANCE', 'W_SIMILAR_NAME', 'W_UNUSED_ASSUMPTION', 'W_UNUSED_GROUP', 'W_UNUSED_RMI'];
     const miss = want.filter((c) => !base.codes.includes(c)); eq(miss, [], 'checks that did not fire');
     eq(base.codes.filter((c) => /^(F_BULLET|F_INTRO|F_EMPTY_ITEM|C_NO_MATCH|C_RMI_GROUPS|W_UNCACHED)$/.test(c)), [], 'text-based or obsolete checks that fired');
     const ui = await page.evaluate(() => [...document.querySelectorAll('.counter b')].map((b) => +b.textContent)); eq(ui, [base.cats.format, base.cats.consistency, base.cats.warning], 'top-bar counters vs model');
@@ -118,9 +118,9 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   await test('F5', 'Connections: hover and multi-focus follow only the links of the risk analysis', async () => {
     await nav(page, 'connections'); await page.click('.seg.multi button:has-text("Components")'); await page.waitForTimeout(200);
     await page.hover('.fnode.t-component:has-text("Edge Gateway")'); await page.waitForTimeout(150);
-    const hov = await page.evaluate(() => { const { M } = window.__rre.state(); const exp = M.by.component.get('Edge Gateway').risks.map((r) => r.id).sort(); return { hl: [...document.querySelectorAll('.fnode.hl.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp }; }); eq(hov.hl, hov.exp, 'highlighted risks');
+    const hov = await page.evaluate(() => { const { M } = window.__rre.state(); const exp = M.by.component.get('Edge Gateway').risks.filter((r) => !r.notRelevant).map((r) => r.id).sort(); /* “Hide not relevant” is on by default */ return { hl: [...document.querySelectorAll('.fnode.hl.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp }; }); eq(hov.hl, hov.exp, 'highlighted risks');
     await page.click('.fnode.t-component:has-text("Edge Gateway")'); await page.waitForTimeout(500); await page.click('.fnode.t-threat >> nth=1'); await page.waitForTimeout(500);
-    const foc = await page.evaluate(() => { const { M, state } = window.__rre.state(); let exp = M.risks; for (const term of state.ui.flow.focus) exp = exp.filter((r) => term.some((o) => o.risks.includes(r))); return { n: state.ui.flow.focus.flat().length, shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp: exp.map((r) => r.id).sort() }; }); eq([foc.n, foc.shown], [2, foc.exp], 'multi-focus risks');
+    const foc = await page.evaluate(() => { const { M, state } = window.__rre.state(); let exp = M.risks.filter((r) => !r.notRelevant); for (const term of state.ui.flow.focus) exp = exp.filter((r) => term.some((o) => o.risks.includes(r))); return { n: state.ui.flow.focus.flat().length, shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp: exp.map((r) => r.id).sort() }; }); eq([foc.n, foc.shown], [2, foc.exp], 'multi-focus risks');
   });
   await test('F7', 'Connections: Ctrl+click collects several threats, applied together on Ctrl release as OR', async () => {
     await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(200);
@@ -129,7 +129,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     eq(before, [0, 2, true], 'focus terms / pending / pending bar before Ctrl release');
     await page.keyboard.up('Control'); await page.waitForTimeout(250);
     const r = await page.evaluate(() => { const { M, state } = window.__rre.state(); const term = state.ui.flow.focus[0] || []; return { terms: state.ui.flow.focus.length, size: term.length, pending: state.ui.flow.pending.length,
-      shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp: M.risks.filter((x) => term.includes(x.threat)).map((x) => x.id).sort(), threats: document.querySelectorAll('.fnode.t-threat').length }; });
+      shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp: M.risks.filter((x) => term.includes(x.threat) && !x.notRelevant).map((x) => x.id).sort(), threats: document.querySelectorAll('.fnode.t-threat').length }; });
     eq([r.terms, r.size, r.pending, r.threats], [1, 2, 0, 2], 'terms / objects in term / pending / threats shown'); eq(r.shown, r.exp, 'risks = union of both threats'); assert(r.exp.length > 0, 'no risks');
     await page.click('.fnode.t-component >> nth=0').catch(() => {}); await page.waitForTimeout(500);
   });
@@ -158,9 +158,11 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     }
     const check = execFileSync('python3', ['-c', 'import sys,json\nfrom openpyxl import load_workbook\nout={}\nfor p in sys.argv[1:]:\n  wb=load_workbook(p)\n  out[p]={ws.title:ws.max_row-1 for ws in wb.worksheets}\nprint(json.dumps(out))', ...Object.values(got)]).toString();
     const rows = JSON.parse(check), byKey = {}; for (const k of keys) byKey[k] = rows[got[k]];
-    const exp = await page.evaluate(() => { const { M } = window.__rre.state(); return { risks: M.risks.length, threats: M.threats.length, groups: M.groups.length, rmis: M.rmis.length, assumptions: M.assumptions.length, components: M.components.length, issues: M.issues.length, links: M.stats.occ }; });
+    /* every module's “Hide not relevant” is on by default: the exports leave out the same objects as the views */
+    const exp = await page.evaluate(() => { const { M } = window.__rre.state(); const only = (o) => o.risks.length > 0 && o.risks.every((r) => r.notRelevant), rel = M.risks.filter((r) => !r.notRelevant);
+      return { all: M.risks.length, risks: rel.length, threats: M.threats.filter((t) => !only(t)).length, groups: M.groups.filter((g) => !only(g)).length, rmis: M.rmis.filter((m) => !only(m)).length, assumptions: M.assumptions.length, components: M.components.length, issues: M.issues.length, links: rel.reduce((a, r) => a + r.items.length, 0) }; });
     eq([byKey.risks.Risks, byKey.risks['Risk-item links'], byKey.matrix.Positions, byKey.threats.Threats, byKey.mitigations['Mitigation groups'], byKey.mitigations['Mitigation items'], byKey.assumptions.Assumptions, byKey.components.Components, byKey.issues.Findings, byKey.connections.Paths],
-      [exp.risks, exp.links, exp.risks, exp.threats, exp.groups, exp.rmis, exp.assumptions, exp.components, exp.issues, exp.risks], 'rows per sheet');
+      [exp.risks, exp.links, exp.all, exp.threats, exp.groups, exp.rmis, exp.assumptions, exp.components, exp.issues, exp.risks], 'rows per sheet');
     for (const k of keys) assert(byKey[k].About === 7, k + ': About sheet');
     eq(await page.evaluate(() => [window.__spy.writes.length, window.__spy.creates.length]), [0, 0], 'file-system writes during export'); eq(page.errors, [], 'script errors');
     return keys.length + ' modules exported';
@@ -201,6 +203,48 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
         uncached: M.wb.sheets.reduce((a, x) => a + x.uncached.length, 0), uncachedIssue: M.issues.filter((i) => i.code === 'W_UNCACHED').length }; });
     eq([r.kinds, r.readAs, r.split, r.dup, r.uncachedIssue], [[true, true, true, true], true, true, [1], 0], 'kinds of format error / read as / IDs on one line all read / duplicate kept once / W_UNCACHED');
     assert(r.uncached > 0, 'the sample formulas should have no stored results');
+  });
+  await test('F12', '“Threat relevance” is an attribute of each risk: “not relevant” anywhere (any case) = not relevant; empty and look-alike texts are warnings and count as relevant', async () => {
+    const r = await page.evaluate(() => { const { M } = window.__rre.state(); const sh = M.wb.sheets.find((x) => x.name === 'Risik analysis Alpha'), col = M.cols.risk.relevance, raw = (k) => String(sh.rows[k.row][col] == null ? '' : sh.rows[k.row][col]).trim();
+      return { cls: M.risks.every((k) => k.notRelevant === /\bnot\s+relevant\b/i.test(raw(k)) && k.relevanceRaw === raw(k)), nr: M.risks.filter((k) => k.notRelevant).length, onThreat: M.threats.some((t) => 'relevance' in t),
+        anyPos: M.risks.some((k) => k.notRelevant && !/^not/i.test(k.relevanceRaw)), missing: M.issues.filter((i) => i.code === 'W_MISSING' && /Threat relevance/.test(i.msg)).map((i) => i.refs[0].notRelevant),
+        typo: M.issues.filter((i) => i.code === 'W_RELEVANCE').map((i) => i.refs[0].notRelevant) }; });
+    eq([r.cls, r.onThreat, r.anyPos, r.missing, r.typo], [true, false, true, [false], [false]], 'classification / no threat relevance / any position / empty / look-alike'); assert(r.nr >= 3, 'sample should contain not-relevant risks');
+  });
+  await test('F13', '“Hide not relevant”: on by default and independent in Risks, Threats, Groups, Items and Connections; unused items stay; BSI tiles of only-not-relevant threats always blank', async () => {
+    await load(page, FILE_T, fx('sample.xlsx'));
+    const exp = await page.evaluate(() => { const { M } = window.__rre.state(); const only = (o) => o.risks.length > 0 && o.risks.every((r) => r.notRelevant);
+      return { risks: M.risks.length, nr: M.risks.filter((r) => r.notRelevant).length, threats: M.threats.length, nrT: M.threats.filter((t) => t.risks.length && only(t)).map((t) => t.id),
+        groups: M.groups.length, nrG: M.groups.filter(only).length, rmis: M.rmis.length, nrI: M.rmis.filter(only).length, unused: M.rmis.filter((m) => m.base && !m.risks.length).map((m) => m.id) }; });
+    assert(exp.nr && exp.nrT.length && exp.nrG && exp.nrI && exp.unused.length, 'sample lacks not-relevant cases');
+    const n = (sel) => page.locator(sel).count(), toggle = async () => { await page.click('#nr-' + (await page.locator('.nr-toggle').getAttribute('id')).slice(3)); await page.waitForTimeout(150); };
+    await nav(page, 'risks'); eq(await n('.view .obj.t-risk'), exp.risks - exp.nr, 'risks, filter on'); await toggle(); eq(await n('.view .obj.t-risk'), exp.risks, 'risks, filter off');
+    await nav(page, 'threats'); eq(await n('.view .obj.t-threat'), exp.threats - exp.nrT.length, 'threats, filter still on (independent)');
+    const tile = page.locator('.ttile:has-text("G 0.' + exp.nrT[0].split('.')[2] + ' ")').first(), tileInfo = async () => [await tile.getAttribute('class'), /Only not-relevant risks/.test(await tile.getAttribute('data-tip'))];
+    eq(await tileInfo(), ['ttile listed', true], 'tile of an only-not-relevant threat'); await toggle(); eq(await n('.view .obj.t-threat'), exp.threats, 'threats, filter off'); eq(await tileInfo(), ['ttile listed', true], 'tile with the filter off');
+    await nav(page, 'mitigations'); eq(await n('.view .obj.t-group'), exp.groups - exp.nrG, 'groups, filter on'); await toggle(); eq(await n('.view .obj.t-group'), exp.groups, 'groups, filter off');
+    await page.click('.seg button:has-text("All items")'); await page.waitForTimeout(150); eq(await n('.view .obj.t-rmi'), exp.rmis - exp.nrI, 'items, filter on (own toggle)');
+    const shown = await page.evaluate(() => [...document.querySelectorAll('.view .obj.t-rmi')].map((x) => x.textContent).join(' ')); assert(exp.unused.every((id) => shown.includes(id)), 'unused items hidden');
+    await toggle(); eq(await n('.view .obj.t-rmi'), exp.rmis, 'items, filter off');
+    await nav(page, 'connections'); await page.waitForTimeout(200);
+    const th = async () => page.evaluate(() => [...document.querySelectorAll('.fnode.t-threat .fnode-id')].map((x) => x.textContent));
+    eq(await n('.fnode.t-risk'), exp.risks - exp.nr, 'connections: risks, filter on'); assert(!(await th()).some((x) => exp.nrT.includes(x)) && (await th()).includes('T.BSI.43'), 'connections: threats');
+    await toggle(); eq(await n('.fnode.t-risk'), exp.risks, 'connections: risks, filter off'); eq(page.errors, [], 'script errors');
+  });
+  await test('F14', 'Connections from a hidden object switches its filter off with a highlight; group boxes show relevant (total); not-relevant risks listed last and marked', async () => {
+    await load(page, FILE_T, fx('sample.xlsx'));
+    const rid = await page.evaluate(() => window.__rre.state().M.risks.find((r) => r.notRelevant).id);
+    await page.fill('#global-search', rid); await page.click('.search-i:has-text("' + rid + '") >> nth=0'); await page.waitForSelector('.drawer .dr-id:has-text("' + rid + '")');
+    assert((await page.textContent('.drawer')).includes('not relevant'), 'risk panel lacks the relevance'); await page.click('.dr-head .btn:has-text("Connections")'); await page.waitForTimeout(300);
+    const r = await page.evaluate((id) => ({ off: window.__rre.state().state.ui.flow.hideNR, flash: !!document.querySelector('#nr-hideNR.flash:not(.on)'), shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).includes(id), other: window.__rre.state().state.ui.risks.hideNR }), rid);
+    eq([r.off, r.flash, r.shown, r.other], [false, true, true, true], 'filter off / highlighted / risk shown / other views unchanged');
+    const g = await page.evaluate(() => { const { M } = window.__rre.state(); const g = M.groups.find((x) => x.risks.some((k) => k.notRelevant) && x.risks.some((k) => !k.notRelevant)); return { id: g.id, rel: g.risks.filter((k) => !k.notRelevant).length, all: g.risks.length }; });
+    await page.keyboard.press('Escape'); await page.fill('#global-search', g.id); await page.click('.search-i:has-text("' + g.id + '") >> nth=0'); await page.waitForSelector('.drawer .dr-id:has-text("' + g.id + '")');
+    const box = page.locator('.drawer .stat:has-text("relevant risks addressed")');
+    eq([(await box.locator('b').textContent()).replace(/\s+/g, ''), await box.getAttribute('data-tip')], [g.rel + '(' + g.all + ')', g.rel + ' relevant risk' + (g.rel === 1 ? '' : 's') + ' · ' + g.all + ' including not relevant (' + (g.all - g.rel) + ' not relevant)'], 'risks box');
+    const rows = await page.evaluate(() => { const sec = [...document.querySelectorAll('.drawer section, .drawer details')].find((x) => /Risks addressed/.test(x.textContent.slice(0, 40)));
+      const more = sec.querySelector('.more'); if (more) more.click(); return [...sec.querySelectorAll('.rrow')].map((x) => x.classList.contains('nr')); });
+    eq(rows, rows.slice().sort((a, b) => a - b), 'not-relevant risks at the end'); assert(rows.includes(true), 'no not-relevant risk marked'); eq(page.errors, [], 'script errors');
   });
   await test('F6', 'Invalid files give a clear message and leave the tool usable', async () => {
     for (const [f, rx] of [['not-a-workbook.xlsx', /not an Excel/], ['encrypted.xlsx', /encrypted|legacy/], ['other-workbook.xlsx', /no risk analysis sheet/]]) { await page.goto(FILE_T); await page.setInputFiles('#file-input', fx(f)); await page.waitForSelector('.toast.error', { timeout: 5000 }); assert(rx.test(await page.locator('.toast.error').first().textContent()), 'message for ' + f); }
@@ -272,7 +316,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   const snapWb = async () => { const f = path.join(edDir, (++step) + '.xlsx'); fs.writeFileSync(f, Buffer.from(await T('get', 'workbook.xlsx'), 'base64')); return f; };
   const pyDiff = (a, b) => JSON.parse(execFileSync('python3', [path.join(__dirname, 'xlsx_diff.py'), a, b]).toString());
   const calcOnLoad = (f) => execFileSync('python3', ['-c', 'import sys,zipfile\nprint(\'fullCalcOnLoad="1"\' in zipfile.ZipFile(sys.argv[1]).read("xl/workbook.xml").decode())', f]).toString().trim() === 'True';
-  const openObjBy = async (q) => { await page.keyboard.press('Escape'); await page.fill('#global-search', q); await page.click('.search-i >> nth=0'); await page.waitForSelector('.drawer'); };
+  const openObjBy = async (q) => { await page.keyboard.press('Escape'); await page.fill('#global-search', q); await page.click('.search-i:has-text("' + q + '") >> nth=0'); await page.waitForSelector('.drawer .dr-id:has-text("' + q + '")'); };
   const save = async () => { await page.click('#form-save'); await page.waitForSelector('#edit-confirm', { timeout: 5000 }); await page.click('#edit-confirm'); await page.waitForSelector('.toast', { timeout: 8000 }); await page.waitForTimeout(400); const t = await page.locator('.toast').last().textContent(); await page.evaluate(() => document.querySelectorAll('.toast').forEach((x) => x.remove())); return t; };
   const modelOf = () => page.evaluate(() => { const { M } = window.__rre.state(); return M; }).catch(() => null);
   await test('E1', 'Edit a risk field: exactly that cell changes (checked independently with openpyxl); save appended to the open log', async () => {
@@ -326,9 +370,9 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     assert(Object.values(d.styles).length > 5 && Object.values(d.styles).every(Boolean), 'new cells not formatted like the row above');
     assert(d.diff.some((x) => /^P\d+$/.test(x[1]) && /^=_xlfn\.TEXTJOIN/.test(String(x[3])) && String(x[3]).includes('O' + exp.row)), '“Risk treatment option” formula not copied to the new row');
     /* a new group: appended after the last group, its Content gets the formula of the row above */
-    await page.keyboard.press('Escape'); await nav(page, 'mitigations'); await page.click('#add-btn'); await page.fill('#f-id', 'RMG10'); await page.fill('#f-name', 'Supplier management'); assert(/^Saved/.test(await save()), 'group not saved');
+    await page.keyboard.press('Escape'); await nav(page, 'mitigations'); await page.click('#add-btn'); await page.fill('#f-id', 'RMG11'); await page.fill('#f-name', 'Supplier management'); assert(/^Saved/.test(await save()), 'group not saved');
     const cur2 = await snapWb(), d2 = pyDiff(prevFile, cur2); prevFile = cur2;
-    const k = d2.diff.find((x) => /^K\d+$/.test(x[1])), gr = d2.diff.find((x) => x[3] === 'RMG10');
+    const k = d2.diff.find((x) => /^K\d+$/.test(x[1])), gr = d2.diff.find((x) => x[3] === 'RMG11');
     assert(gr && k && k[1].slice(1) === gr[1].slice(1) && /^=_xlfn\.TEXTJOIN/.test(String(k[3])) && String(k[3]).includes('J' + gr[1].slice(1)), 'Content formula not copied to the new group row: ' + JSON.stringify(d2.diff));
   });
   await test('E5', 'Rename a component and an assumption title: propagated to every risk and assumption that uses them', async () => {
@@ -337,6 +381,13 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     await page.keyboard.press('Escape'); await nav(page, 'assumptions'); await page.click('.obj-head:has-text("A.4") .icon-btn'); await page.waitForSelector('.drawer'); await page.click('#edit-btn'); await page.fill('#f-title', 'Devices have a hardware root of trust (secure element)'); assert(/^Saved/.test(await save()), 'assumption not saved');
     r = await page.evaluate(() => { const { M } = window.__rre.state(); return M.issues.filter((i) => i.code === 'W_ASSUMPTION_TITLE' && i.refs.some((o) => o.id === 'A.4')).length; }); eq(r, 0, 'risks citing A.4 with the old title');
     prevFile = await snapWb();
+  });
+  await test('E8', 'Relevance is edited per risk: only that risk’s “Threat relevance” cell changes; the threat form has no relevance field', async () => {
+    await openObjBy('T.BSI.43'); await page.click('#edit-btn'); await page.waitForSelector('dialog[open] #f-name'); eq(await page.locator('dialog[open] #f-relevance').count(), 0, 'relevance field in the threat form'); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+    const before = await snapWb(); await openObjBy('R.DB.2'); await page.click('#edit-btn'); await page.fill('#f-relevance', 'Not relevant: decommissioned'); const msg = await save(); assert(/^Saved/.test(msg), msg);
+    const cur = await snapWb(), d = pyDiff(before, cur); prevFile = cur;
+    eq(d.diff.map((x) => [x[0], x[3]]), [['Risik analysis Alpha', 'Not relevant: decommissioned']], 'changed cells'); eq(d.diff[0][1].replace(/\d+/, ''), 'D', 'column “Threat relevance”');
+    eq(await page.evaluate(() => window.__rre.state().M.by.risk.get('R.DB.2').notRelevant), true, 'R.DB.2 now not relevant');
   });
   await test('E6', 'Safety: no save when the workbook changed on disk; nothing written outside the workbook and the two folders', async () => {
     const before = await T('tree'); await T('put', 'workbook.xlsx', b64('modified.xlsx')); const changed = (await T('tree'))['workbook.xlsx'];
@@ -347,7 +398,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   });
   await test('E7', 'Baseline saves the Excel version and starts a new log; earlier logs are not modified', async () => {
     const t0 = await T('tree'), logs0 = Object.keys(t0).filter((k) => k.startsWith('change-logs/')).sort(), cur = JSON.parse(await T('read', logs0[logs0.length - 1]));
-    eq(cur.entries.length, 8, 'saves in the current log');
+    eq(cur.entries.length, 9, 'saves in the current log');
     await T('put', 'workbook.xlsx', fs.readFileSync(prevFile).toString('base64')); // back to the edited version (E6 replaced it)
     await page.keyboard.press('Escape'); await page.click('#reload-btn'); await page.waitForTimeout(700); await page.click('#write-btn'); await page.click('#write-baseline'); await page.waitForTimeout(1500);
     const t1 = await T('tree'), logs1 = Object.keys(t1).filter((k) => k.startsWith('change-logs/')).sort(), neu = JSON.parse(await T('read', logs1[logs1.length - 1]));
