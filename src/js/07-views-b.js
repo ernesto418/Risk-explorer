@@ -5,7 +5,8 @@
 /* =============================== MITIGATIONS =============================== */
 function rmiCard(m) {
   return objCard(m, {
-    main: [m.groups.length ? m.groups.map((g) => chip(g)) : h('span.tag.bad', { tip: 'Error: not assigned to any Risk Mitigation Group' }, 'no group'),
+    main: [m.removed ? h('span.tag.removed', { tip: 'Marked as removed (column “Removed” = yes). Hidden everywhere else in the tool.' }, 'removed')
+      : m.groups.length ? m.groups.map((g) => chip(g)) : h('span.tag.bad', { tip: 'Error: not assigned to any Risk Mitigation Group' }, 'no group'),
       h('span.meta-n', { tip: 'Risks using this item' }, icon('risk', 12), plural(m.risks.length, 'risk')),
       m.base ? null : h('span.tag.bad', { tip: 'Consistency error: this RMI ID is not in the master list' }, 'unknown ID')],
     side: m.risks.length ? pill(maxOf(m.risks, (r) => r.index), 'Highest initial risk index among the risks using this item') : null,
@@ -41,15 +42,17 @@ VIEWS.mitigations = function () {
       }
     } else {
       const q = ui.q.toLowerCase();
-      let items = M.rmis.filter((m) => !q || (m.id + ' ' + m.text + ' ' + m.groups.map((g) => g.id + ' ' + g.name).join(' ')).toLowerCase().includes(q));
+      /* the only place that can show removed items (“Hide removed”, on by default) */
+      const pool = ui.hideRemoved ? M.rmis : M.allRmis, rmN = M.allRmis.length - M.rmis.length;
+      let items = pool.filter((m) => !q || (m.id + ' ' + m.text + ' ' + m.groups.map((g) => g.id + ' ' + g.name).join(' ')).toLowerCase().includes(q));
       if (ui.only === 'unassigned') items = items.filter((m) => !m.groups.length);
       else if (ui.only === 'issues') items = items.filter((m) => m.issues.some((i) => i.cat !== 'warning'));
       else if (ui.only === 'orphan') items = items.filter((m) => !m.occ.length);
       else if (ui.only === 'shared') items = items.filter((m) => m.risks.length > 1);
       const nrN = ui.hideNRi ? items.filter(onlyNotRelevant).length : 0;
       if (ui.hideNRi) items = items.filter((m) => !onlyNotRelevant(m));
-      fill(nrSlot, nrToggle(ui, 'hideNRi', plural(nrN, 'item') + ' hidden', draw));
-      body.append(h('div.list-info', items.length + ' of ' + M.rmis.length + ' mitigation items' + (nrN ? ' (' + nrN + ' linked only to not-relevant risks hidden)' : '')));
+      fill(nrSlot, removedToggle(ui, rmN, draw), nrToggle(ui, 'hideNRi', plural(nrN, 'item') + ' hidden', draw));
+      body.append(h('div.list-info', items.length + ' of ' + pool.length + ' mitigation items' + (nrN ? ' (' + nrN + ' linked only to not-relevant risks hidden)' : '') + (ui.hideRemoved && rmN ? ' · ' + plural(rmN, 'removed item') + ' hidden' : '')));
       const list = h('div.list');
       const show = (n) => { clear(list); items.slice(0, n).forEach((m) => list.append(rmiCard(m))); if (items.length > n) list.append(h('button.more', { type: 'button', onclick: () => show(n + 300) }, 'Show more (' + (items.length - n) + ' remaining)')); if (!items.length) list.append(emptyState('No mitigation items match')); };
       show(150);

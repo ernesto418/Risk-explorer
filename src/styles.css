@@ -335,6 +335,7 @@ code.excerpt { display: block; font: 12px/1.45 var(--mono); background: var(--su
 .preview { max-height: 46vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; } .preview td { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; }
 
 /* ---- “not relevant” risks and the “Hide not relevant” toggle ---- */
+.tag.removed { background: var(--surface-3); color: var(--text-2); text-decoration: line-through; }
 .tag.nr { background: color-mix(in srgb, var(--medium) 22%, var(--surface)); color: color-mix(in srgb, var(--medium) 30%, var(--text-2)); }
 .rrow.nr { background: color-mix(in srgb, var(--medium) 9%, var(--surface)); } .rrow.nr .rrow-text { color: var(--muted); }
 .rrow.nr:hover { background: color-mix(in srgb, var(--medium) 15%, var(--surface)); }

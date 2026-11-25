@@ -1,4 +1,9 @@
 /* ---------------------------------------------------------------------------
+ * DEPRECATED — editing of the workbook is DISABLED in the app (owner decision,
+ * 2026-11): `edit.enabled` is false, so no Edit / Add button is shown. The code
+ * is kept until editing is rebuilt; do not extend it — ask the owner first.
+ * The automated tests switch it on in the test build only (window.__rre.edit).
+ *
  * 07z-edit.js — OPTIONAL editing of the workbook (only in write mode).
  * Flow of every save: high-level edit -> list of cell writes / appended rows ->
  * preview -> new .xlsx built by patching only those cells (all other parts of
@@ -300,7 +305,7 @@ async function commit(cs, title) {
   if (!cs.size) { toast('Nothing changed.'); return false; }
   /* column header + what the row is (e.g. “Risk reduction value” of R.API.3), so every line of the preview is self-explanatory */
   const header = (sh, c) => { const rep = M.sheetReport.find((x) => x.name === sh.name); return rep && rep.headerRow ? str(rawCell(sh, rep.headerRow - 1, c)) : ''; };
-  const owner = (sh, r) => { const o = [...M.risks, ...M.assumptions, ...M.groups, ...M.rmis.filter((x) => x.base)].find((x) => x.sheet === sh.name && x.row === r) || M.threats.find((t) => t.sheet === sh.name && t.row === r); return o ? o.id : ''; };
+  const owner = (sh, r) => { const o = [...M.risks, ...M.assumptions, ...M.groups, ...M.allRmis.filter((x) => x.base)].find((x) => x.sheet === sh.name && x.row === r) || M.threats.find((t) => t.sheet === sh.name && t.row === r); return o ? o.id : ''; };
   const CALC = ' — calculated: risk index = frequency × effects, reduction = index before − index after';
   const rows = [...cs.cells.values()].map((ch) => [ch.sh.name, cellRef(ch.r, ch.c), str(ch.old), str(ch.value), header(ch.sh, ch.c) + (ch.computed ? CALC : ''), owner(ch.sh, ch.r)]);
   const CALC_ROW = ' — calculated: formula of the row above (if it has one)';
@@ -337,7 +342,7 @@ async function commit(cs, title) {
     return true;
   } catch (e) { toast('Not saved: ' + (e && e.message ? e.message : e), 'error'); return false; } finally { edit.busy = false; document.body.classList.remove('busy'); }
 }
-const edit = { busy: false };
+const edit = { busy: false, enabled: false }; // DEPRECATED: enabled = false keeps every editing button out of the UI
 
 /* ---------- forms ---------- */
 function formDialog(title, fields, onSubmit) {
@@ -419,7 +424,7 @@ function addRmiDialog(r) {
   formDialog('Add mitigation item to ' + r.id, [
     { key: 'existing', label: 'Existing mitigation item', type: 'select', options: [{ value: '', label: '— new item (type the text below) —' }].concat(others.map((m) => ({ value: m.key, label: m.id + ' ' + truncate(m.text, 80) }))), value: '' },
     { key: 'text', label: 'New item text', type: 'textarea', rows: 2, value: '' },
-    { key: 'rmiId', label: 'RMI ID of the new item', value: nextPadded(M.rmis.filter((m) => m.base).map((m) => m.id)), help: 'Only for a new item: it is added as a new row (RMI ID + text) to “' + M.sheetNames.rmi + '”.' },
+    { key: 'rmiId', label: 'RMI ID of the new item', value: nextPadded(M.allRmis.filter((m) => m.base).map((m) => m.id)), help: 'Only for a new item: it is added as a new row (RMI ID + text) to “' + M.sheetNames.rmi + '”.' },
     { key: 'group', label: 'Risk Mitigation Group', type: 'select', options: [{ value: '', label: '— choose —' }].concat(M.groups.map((g) => ({ value: g.id, label: g.id + ' ' + g.name }))), value: '', required: true, help: 'Required: the RMI ID is added to this group’s “RMI ID” cell (unless it is already there).' },
   ], (v) => {
     const m = v.existing ? M.by.rmi.get(v.existing) : null;
@@ -431,7 +436,7 @@ function addRmiDialog(r) {
       if (same) throw new Error('this text already exists as ' + same.id + ' — choose it under “Existing mitigation item”');
       newId = v.rmiId; if (!newId) throw new Error('a new item needs an RMI ID');
       if (/\s|[,;]/.test(newId)) throw new Error('the RMI ID must not contain spaces, commas or semicolons');
-      if (M.rmis.some((x) => x.base && x.id.toLowerCase() === newId.toLowerCase())) throw new Error('RMI ID ' + newId + ' already exists');
+      if (M.allRmis.some((x) => x.base && x.id.toLowerCase() === newId.toLowerCase())) throw new Error('RMI ID ' + newId + ' already exists');
     } else if (r.items.some((o) => o.rmi === m)) throw new Error(r.id + ' already lists ' + m.id);
     const g = M.by.group.get(v.group); if (!g) throw new Error('choose a Risk Mitigation Group');
     const cs = new ChangeSet(); cs.focus = r; addRmi(cs, r, m, text, g, newId); return cs;
@@ -466,7 +471,7 @@ function addGroupDialog() {
     const cs = new ChangeSet(); cs.focus = { type: 'group', id: v.id }; addGroup(cs, v); return cs;
   });
 }
-const canEdit = () => write.on && !!M && !!M.sheetObj && !!M.sheetObj.risk;
+const canEdit = () => edit.enabled && write.on && !!M && !!M.sheetObj && !!M.sheetObj.risk; // DEPRECATED: see the file header
 function editButtons(o) {
   if (!canEdit() || !EDITORS[o.type] || (o.type === 'rmi' && (!o.base || !M.sheetObj.rmi))) return null;
   return [h('button.btn.ghost.sm', { type: 'button', id: 'edit-btn', tip: 'Edit in the workbook', onclick: () => EDITORS[o.type](o) }, icon('pen', 13), 'Edit'),

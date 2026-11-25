@@ -13,14 +13,16 @@ ICONS.pen = ['M3 13l.6-3.1L10.9 2.6l2.5 2.5L6.1 12.4z', 'M9.4 4.1l2.5 2.5'];
 /** Plain, comparable picture of a model: one record per object, keyed by ID. */
 function snapshot(m) {
   const obj = (list, fn) => { const o = {}; for (const x of list) o[x.id] = fn(x); return o; };
+  /* the RMI IDs as written in the cell, including those of removed items (which are not linked) */
+  const ids = (o) => o.items.concat(o.removedRefs || []).sort((a, b) => a.line - b.line).map((x) => x.rmi.id);
   return {
     risk: obj(m.risks, (r) => ({ threat: r.threat ? r.threat.id : '', description: r.description, component: r.componentRaw, coreValues: r.coreValues.join(', '),
       assumptions: r.assumptionRefs.map((a) => a.id).join(', '), frequency: r.freqRaw, effects: r.effectRaw, riskIndex: r.index, treatmentCategory: r.categoryRaw,
-      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, relevance: r.relevanceRaw, rmis: r.items.map((o) => o.rmi.id) })),
+      frequencyAfter: r.freqAfterRaw, effectsAfter: r.effectAfterRaw, riskIndexAfter: r.indexAfter, reduction: r.reduction, saveDescription: r.save, relevance: r.relevanceRaw, rmis: ids(r) })),
     threat: obj(m.threats, (t) => ({ name: t.name })),
     assumption: obj(m.assumptions, (a) => ({ title: a.title, description: a.description, components: a.componentsRaw, validityAlpha: a.validityAlpha, validityBeta: a.validityBeta, comment: a.comment })),
-    rmi: obj(m.rmis.filter((x) => x.base && !/#row/.test(x.key)), (x) => ({ text: x.text, extendedDescription: x.extDescription, comment: x.comment, responsible: x.responsible })),
-    group: obj(m.groups, (g) => ({ name: g.name, treatment: g.treatment, rmis: g.items.map((i) => i.rmi.id) })),
+    rmi: obj((m.allRmis || m.rmis).filter((x) => x.base && !/#row/.test(x.key)), (x) => ({ text: x.text, extendedDescription: x.extDescription, comment: x.comment, responsible: x.responsible, removed: x.removedRaw || '' })),
+    group: obj(m.groups, (g) => ({ name: g.name, treatment: g.treatment, rmis: ids(g) })),
   };
 }
 /** Object-level diff of two snapshots (a may be null for the first baseline). */

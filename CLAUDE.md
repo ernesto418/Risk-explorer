@@ -17,6 +17,9 @@ mode edits — a BSI 200-3 cybersecurity risk analysis kept in an Excel workbook
 - **Render workbook text only as text** (`h()` / `textContent`), never `innerHTML`.
 - **UI, code and docs in English.** The project owner writes in Spanish — answer them in Spanish.
 - **Never commit real workbooks, baselines or change logs**; fixtures and the sample are fictional.
+- **Workbook editing is DEPRECATED and disabled in the UI** (`edit.enabled = false` in `src/js/07z-edit.js`, owner
+  decision 2026-11). Keep the code (it will be rebuilt), do not extend it or re-enable it without the owner; the E tests
+  switch it on only in the test build (`window.__rre.edit.enabled = true`).
 - If a requested change has a technical or logical ambiguity (especially anything that writes to the workbook), stop
   and ask the owner before implementing.
 

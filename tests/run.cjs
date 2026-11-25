@@ -99,7 +99,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   let base = null;
   await test('F1', 'Sample workbook: sheets recognised, Beta sheet ignored, object counts as expected', async () => {
     await load(page, FILE_T, fx('sample.xlsx')); base = await model();
-    eq(base.n, [19, 41, 43, 10, 10, 8], 'threats/risks/items/groups/assumptions/components'); assert(base.sheets.includes('Assumed Risks Beta:ignored'), 'Beta sheet not ignored: ' + base.sheets);
+    eq(base.n, [19, 41, 42, 10, 10, 8], 'threats/risks/items (active)/groups/assumptions/components'); assert(base.sheets.includes('Assumed Risks Beta:ignored'), 'Beta sheet not ignored: ' + base.sheets);
   });
   await test('F2', 'Every seeded mistake of the sample is reported by its check', async () => {
     const want = ['C_ASSUMPTION_UNKNOWN', 'C_DUP_ID', 'C_INDEX', 'C_NOT_IN_GROUP', 'C_RMI_UNKNOWN', 'C_REDUCTION', 'C_THREAT_MISMATCH', 'F_ASSUMPTION_REF', 'F_RMI_REF', 'F_VALUE', 'W_AFTER_HIGHER', 'W_DUP_LINE', 'W_DUP_TEXT', 'W_MISSING', 'W_MULTI_GROUP', 'W_NOT_FORMULA', 'W_RELEVANCE', 'W_SIMILAR_NAME', 'W_UNUSED_ASSUMPTION', 'W_UNUSED_GROUP', 'W_UNUSED_RMI'];
@@ -169,11 +169,12 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   });
   await test('F10', 'Mitigation items: texts only from “Risk mitigations individual”, links only by RMI ID; unknown IDs reported once per use; text columns not read', async () => {
     const r = await page.evaluate(() => { const { M } = window.__rre.state(); const sheet = (n) => M.wb.sheets.find((x) => x.name === n);
-      const master = new Map(sheet('Risk mitigations individual').rows.slice(1).filter(Boolean).map((row) => [row[0], row[1]]));
+      const msh = sheet('Risk mitigations individual'), master = new Map(msh.rows.slice(1).filter(Boolean).map((row) => [row[0], row[1]])), rc0 = msh.rows[0].indexOf('Removed');
+      const removed = new Set(msh.rows.slice(1).filter((row) => row && /^yes$/i.test(String(row[rc0] == null ? '' : row[rc0]).trim())).map((row) => row[0]));
       const idCol = (sh) => { for (let i = 0; i < 10; i++) { const c = (sh.rows[i] || []).indexOf('RMI ID'); if (c >= 0) return c; } return -1; };
       const ra = sheet('Risik analysis Alpha'), rg = sheet('Risk Mitigation Groups'), rc = idCol(ra), gc = idCol(rg);
       /* independent reading of the RMI ID cells: lines that are exactly a master ID */
-      const lines = (sh, c, row) => [...new Set(String(sh.rows[row][c] || '').split('\n').map((x) => x.trim()).filter((x) => master.has(x)))];
+      const lines = (sh, c, row) => [...new Set(String(sh.rows[row][c] || '').split('\n').map((x) => x.trim()).filter((x) => master.has(x) && !removed.has(x)))];
       const exact = (items) => [...new Set(items.filter((o) => o.rmi.base && o.raw === o.rmi.id).map((o) => o.rmi.id))];
       const refs = M.risks.flatMap((k) => k.items).concat(M.groups.flatMap((g) => g.items));
       return { cols: rc >= 0 && gc >= 0, riskOk: M.risks.every((k) => JSON.stringify(exact(k.items)) === JSON.stringify(lines(ra, rc, k.row))), groupOk: M.groups.every((g) => JSON.stringify(exact(g.items)) === JSON.stringify(lines(rg, gc, g.row))),
@@ -217,7 +218,7 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
       return { risks: M.risks.length, nr: M.risks.filter((r) => r.notRelevant).length, threats: M.threats.length, nrT: M.threats.filter((t) => t.risks.length && only(t)).map((t) => t.id),
         groups: M.groups.length, nrG: M.groups.filter(only).length, rmis: M.rmis.length, nrI: M.rmis.filter(only).length, unused: M.rmis.filter((m) => m.base && !m.risks.length).map((m) => m.id) }; });
     assert(exp.nr && exp.nrT.length && exp.nrG && exp.nrI && exp.unused.length, 'sample lacks not-relevant cases');
-    const n = (sel) => page.locator(sel).count(), toggle = async () => { await page.click('#nr-' + (await page.locator('.nr-toggle').getAttribute('id')).slice(3)); await page.waitForTimeout(150); };
+    const n = (sel) => page.locator(sel).count(), toggle = async () => { await page.click('#' + (await page.locator('.nr-toggle[id^="nr-"]').getAttribute('id'))); await page.waitForTimeout(150); };
     await nav(page, 'risks'); eq(await n('.view .obj.t-risk'), exp.risks - exp.nr, 'risks, filter on'); await toggle(); eq(await n('.view .obj.t-risk'), exp.risks, 'risks, filter off');
     await nav(page, 'threats'); eq(await n('.view .obj.t-threat'), exp.threats - exp.nrT.length, 'threats, filter still on (independent)');
     const tile = page.locator('.ttile:has-text("G 0.' + exp.nrT[0].split('.')[2] + ' ")').first(), tileInfo = async () => [await tile.getAttribute('class'), /Only not-relevant risks/.test(await tile.getAttribute('data-tip'))];
@@ -245,6 +246,29 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     const rows = await page.evaluate(() => { const sec = [...document.querySelectorAll('.drawer section, .drawer details')].find((x) => /Risks addressed/.test(x.textContent.slice(0, 40)));
       const more = sec.querySelector('.more'); if (more) more.click(); return [...sec.querySelectorAll('.rrow')].map((x) => x.classList.contains('nr')); });
     eq(rows, rows.slice().sort((a, b) => a - b), 'not-relevant risks at the end'); assert(rows.includes(true), 'no not-relevant risk marked'); eq(page.errors, [], 'script errors');
+  });
+  await test('F15', 'Removed items (column “Removed”): hidden everywhere except the items tab (“Hide removed”, on by default); links to them are errors and ignored; no usage checks', async () => {
+    await load(page, FILE_T, fx('sample.xlsx'));
+    const r = await page.evaluate(() => { const { M } = window.__rre.state(); const sh = M.wb.sheets.find((x) => x.name === 'Risk mitigations individual'), c = sh.rows[0].indexOf('Removed');
+      const exp = sh.rows.slice(1).filter((row) => row && row[0] && /^yes$/i.test(String(row[c] == null ? '' : row[c]).trim())).map((row) => row[0]).sort(), rem = M.allRmis.filter((m) => m.removed);
+      return { ids: rem.map((m) => m.id).sort(), exp, inActive: M.rmis.some((m) => m.removed), linked: M.risks.some((k) => k.items.some((o) => o.rmi.removed)) || M.groups.some((g) => g.items.some((i) => i.rmi.removed)),
+        errs: M.issues.filter((i) => i.code === 'C_RMI_REMOVED').length, refs: M.risks.concat(M.groups).reduce((a, o) => a + o.removedRefs.length, 0), own: rem.flatMap((m) => m.issues.map((i) => i.code)).filter((x) => x !== 'C_RMI_REMOVED'),
+        invalid: M.issues.filter((i) => i.code === 'F_VALUE' && /“Removed”/.test(i.msg)).map((i) => i.refs[0].removed), dupText: rem.some((m) => m.text && M.rmis.some((x) => x.text === m.text)), active: M.rmis.length,
+        holder: (M.risks.find((k) => k.removedRefs.length) || {}).id, linkedId: (rem.find((m) => m.issues.length) || {}).id }; });
+    eq([r.ids, r.inActive, r.linked, r.errs, r.own, r.invalid, r.dupText], [r.exp, false, false, r.refs, [], [false], true], 'removed IDs / not among active items / not linked / one error per link / no other findings / invalid value / same text, no warning');
+    assert(r.refs >= 2 && r.exp.length >= 2 && r.holder && r.linkedId, 'sample lacks removed items or links to them');
+    await page.fill('#global-search', r.linkedId); await page.waitForTimeout(300); eq(await page.locator('.search-i:has-text("' + r.linkedId + '")').count(), 0, 'global search finds a removed item');
+    await page.fill('#global-search', ''); eq(+(await page.locator('.nav-i:has-text("Mitigations") .count').textContent()), r.active, 'sidebar count');
+    await page.fill('#global-search', r.holder); await page.click('.search-i:has-text("' + r.holder + '") >> nth=0'); await page.waitForSelector('.drawer .dr-id:has-text("' + r.holder + '")');
+    assert(!(await page.locator('.drawer ul.items').textContent()).includes(r.linkedId), 'removed item listed in the risk panel'); await page.keyboard.press('Escape');
+    await nav(page, 'connections'); await page.waitForTimeout(200); const fn = await page.evaluate(() => [...document.querySelectorAll('.fnode.t-rmi .fnode-id')].map((x) => x.textContent));
+    assert(fn.length && !fn.some((x) => r.ids.includes(x)), 'removed item in Connections');
+    await nav(page, 'mitigations'); await page.click('.seg button:has-text("All items")'); await page.waitForTimeout(200);
+    const ids = () => page.evaluate(() => [...document.querySelectorAll('.view .obj.t-rmi .obj-head')].map((x) => x.textContent));
+    const on = await ids(); assert(!on.some((t) => r.ids.some((id) => t.includes(id))), 'removed items shown with “Hide removed” on');
+    await page.click('#rm-hideRemoved'); await page.waitForTimeout(200); eq((await ids()).length, on.length + r.ids.length, 'items with “Hide removed” off');
+    await page.fill('.view .controls .searchbox input', r.linkedId); await page.waitForTimeout(400); eq((await ids()).filter((t) => t.includes(r.linkedId)).length, 1, 'items search finds the removed item');
+    eq(page.errors, [], 'script errors');
   });
   await test('F6', 'Invalid files give a clear message and leave the tool usable', async () => {
     for (const [f, rx] of [['not-a-workbook.xlsx', /not an Excel/], ['encrypted.xlsx', /encrypted|legacy/], ['other-workbook.xlsx', /no risk analysis sheet/]]) { await page.goto(FILE_T); await page.setInputFiles('#file-input', fx(f)); await page.waitForSelector('.toast.error', { timeout: 5000 }); assert(rx.test(await page.locator('.toast.error').first().textContent()), 'message for ' + f); }
@@ -319,8 +343,13 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   const openObjBy = async (q) => { await page.keyboard.press('Escape'); await page.fill('#global-search', q); await page.click('.search-i:has-text("' + q + '") >> nth=0'); await page.waitForSelector('.drawer .dr-id:has-text("' + q + '")'); };
   const save = async () => { await page.click('#form-save'); await page.waitForSelector('#edit-confirm', { timeout: 5000 }); await page.click('#edit-confirm'); await page.waitForSelector('.toast', { timeout: 8000 }); await page.waitForTimeout(400); const t = await page.locator('.toast').last().textContent(); await page.evaluate(() => document.querySelectorAll('.toast').forEach((x) => x.remove())); return t; };
   const modelOf = () => page.evaluate(() => { const { M } = window.__rre.state(); return M; }).catch(() => null);
-  await test('E1', 'Edit a risk field: exactly that cell changes (checked independently with openpyxl); save appended to the open log', async () => {
+  await test('E0', 'Editing is deprecated: in write mode no Edit / Add button is shown (the E tests switch the old code on in the test build only)', async () => {
     await page.click('#write-btn'); await page.fill('#write-name', 'Editor'); await page.click('#write-enable'); await page.waitForTimeout(300);
+    await nav(page, 'risks'); const add = await page.locator('#add-btn').count(); await openObjBy('R.DB.2'); const btns = await page.locator('#edit-btn, #add-rmi-btn').count(); await page.keyboard.press('Escape');
+    eq([await page.evaluate(() => [window.__rre.write.on, window.__rre.edit.enabled]), add, btns], [[true, false], 0, 0], 'write mode + editing flag / Add button / Edit buttons');
+    await page.evaluate(() => { window.__rre.edit.enabled = true; }); // DEPRECATED editing code: still tested until it is rebuilt
+  });
+  await test('E1', 'Edit a risk field: exactly that cell changes (checked independently with openpyxl); save appended to the open log', async () => {
     prevFile = await snapWb();
     await openObjBy('R.DB.2'); await page.click('#edit-btn'); await page.fill('#f-description', 'Edited description of R.DB.2'); await page.click('#form-save'); await page.waitForSelector('#edit-confirm');
     const pv = await page.locator('.preview tbody tr').first().textContent(); assert(pv.includes('R.DB.2') && pv.includes('Risk description'), 'preview row lacks object/field: ' + pv);

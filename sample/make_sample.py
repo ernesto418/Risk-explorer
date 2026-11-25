@@ -164,9 +164,16 @@ for gid, (_, _, items) in GROUPS.items():
 canon += [FOUR_EYES, TABLETOP, WAF]
 MASTER = [[f"RMI-{n + 1:03d}", t] for n, t in enumerate(canon)]
 MASTER.append([f"RMI-{len(MASTER) + 1:03d}", "Monitor certificate expiry dates"])   # same text as another RMI
+# column "Removed": empty / no = active, yes = removed; anything else is a format error (treated as active)
+REMOVED_LINKED = f"RMI-{len(MASTER) + 1:03d}"
+MASTER.append([REMOVED_LINKED, "Rotate service credentials automatically every 90 days"])   # removed, same text as an active RMI (no warning), still linked (errors)
+MASTER.append([f"RMI-{len(MASTER) + 1:03d}", ""])                                # removed without text (no warning)
+REMOVED = {REMOVED_LINKED: "Yes", MASTER[-1][0]: "yes"}
 ID = {}
 for i, t in MASTER: ID.setdefault(t, i)
 TEXT = {i: t for i, t in MASTER}
+REMOVED[ID[TABLETOP]] = "yes"                                                   # removed and unused: no "not used" warning
+REMOVED[ID["Review access rights every quarter"]] = "maybe"                     # invalid value -> format error, stays active
 
 for r in risks:
     r["ids"] = [ID[t] for t, g in r["items"]]
@@ -209,6 +216,7 @@ special[10]["rel"] = "Indirectly relevant, covered by G 0.23."                  
 special[14]["rel"] = "Currently NOT RELEVANT: feature disabled in the Alpha release"   # not relevant (any case, any position)
 special[18]["rel"] = None                                                       # empty -> warning, counts as relevant
 special[22]["rel"] = "Not relevent for the Alpha release"                       # typo -> warning, NOT hidden
+special[5]["ids"].append(REMOVED_LINKED)                                        # a risk still listing a removed item
 mis = next(x for x in risks if x["num"] == 32); mis["tid_override"] = "T.BSI.23"  # threat id / name mismatch (first row of the threat)
 
 # group RMI IDs, with a few inconsistencies
@@ -217,6 +225,7 @@ group_ids["RMG08"].append(ID[WAF])                                              
 group_ids["RMG04"].append(ID["Run static code analysis in the build pipeline"])  # item listed by two groups
 group_ids["RMG06"].append("RMI-098")                                            # RMI ID not in the master list
 group_ids["RMG03"][3:5] = [group_ids["RMG03"][3] + "; " + group_ids["RMG03"][4]]  # two RMI IDs on one line
+group_ids["RMG02"].append(REMOVED_LINKED)                                       # a group still listing a removed item
 HAND_TYPED_GROUP = "RMG06"                                                      # Content typed instead of the formula
 
 # ---------------------------------------------------------------- workbook
@@ -315,13 +324,14 @@ ws.column_dimensions["I"].width = 34; ws.column_dimensions["J"].width = 12; ws.c
 
 # master list of individual mitigation items (headers start in A1)
 ws = wb.create_sheet("Risk mitigations individual")
-for i, hname in enumerate(["RMI ID", "Mitigation item", "Groups", "Assigned", " Extended Description", "Comment", "Responsible"]):
+for i, hname in enumerate(["RMI ID", "Mitigation item", "Groups", "Assigned", " Extended Description", "Comment", "Responsible", "Removed"]):
     c = ws.cell(row=1, column=1 + i, value=hname); c.font = bold; c.fill = head_fill
 people = ["Security Officer", "Platform Team", "Operations", "Development Lead"]
 g_ids, g_rmi = f"{GRP_SHEET}!$G$2:$G${G_LAST}", f"{GRP_SHEET}!$J$2:$J${G_LAST}"
 for n, (rid, t) in enumerate(MASTER):
     rr = 2 + n
-    row = [rid, t, None, None, f"Implementation details for: {t.lower()}.", "" if n % 3 else "Reviewed in workshop", people[n % 4]]
+    removed = REMOVED.get(rid, "no" if n % 5 == 0 else "No" if n % 7 == 0 else "")
+    row = [rid, t or None, None, None, f"Implementation details for: {t.lower()}." if t else None, "" if n % 3 else "Reviewed in workshop", people[n % 4], removed]
     for ci, v in enumerate(row):
         ws.cell(row=rr, column=1 + ci, value=v or None).alignment = wrap
     set_array(ws, f"C{rr}", ArrayFormula(None, f'=_xlfn.TEXTJOIN(", ",TRUE,IF(ISNUMBER(FIND(CHAR(10)&A{rr}&CHAR(10),CHAR(10)&{g_rmi}&CHAR(10)))*({g_ids}<>""),{g_ids},""))'))

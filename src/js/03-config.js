@@ -89,6 +89,7 @@ const ISSUE_TYPES = {
   F_THREAT_NAME: ['format', 'Threat name does not start with “G 0.n”', 'The threat column must start with the elementary threat number followed by its name.'],
   F_ASSUMPTION_REF: ['format', 'Malformed assumption reference', 'Related assumptions must start with the assumption ID written as A.<number>.'],
   C_NOT_IN_GROUP: ['consistency', 'Mitigation item used by risks but not in any group', 'Every RMI used by a risk must be listed in the “RMI ID” column of at least one Risk Mitigation Group. That is how items are linked to groups.'],
+  C_RMI_REMOVED: ['consistency', 'Link to a removed mitigation item', 'The item is marked as removed (column “Removed” = yes in “Risk mitigations individual”) but a risk or group still lists its RMI ID. The link is ignored; remove the ID from the “RMI ID” cell.'],
   C_RMI_UNKNOWN: ['consistency', 'Unknown RMI ID', 'Every RMI ID in the “RMI ID” column of the risk analysis or of a group must exist in the sheet “Risk mitigations individual”, which holds the text of every item.'],
   W_UNUSED_RMI: ['warning', 'Mitigation item not linked to any risk', 'No risk lists this RMI in its “RMI ID” cell — whether or not a group lists it.'],
   W_DUP_TEXT: ['warning', 'Two mitigation items with identical text', 'Two rows of “Risk mitigations individual” have the same text under different RMI IDs — possibly the same item.'],

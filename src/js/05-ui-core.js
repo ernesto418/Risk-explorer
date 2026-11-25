@@ -20,7 +20,7 @@ const state = {
     /* hideNR: “Hide not relevant” of each view (on at start, independent per view / tab) */
     risks: { f: {}, group: 'threat', sort: 'index', hideNR: true },
     threats: { hideNR: true },
-    mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true },
+    mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true, hideRemoved: true },
     asm: { q: '' },
     comp: { when: 'before' },
     flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: [], pending: [], hideNR: true, hideNRFlash: false },
@@ -155,6 +155,14 @@ function nrToggle(ui, key, hiddenText, onchange) {
     tip: (on ? 'On: ' : 'Off: ') + 'hides objects whose risks are all “not relevant” (column “Threat relevance”: the words “not relevant” anywhere in the text). Click to ' + (on ? 'show them.' : 'hide them.'),
     onclick: () => { ui[key] = !on; onchange(); },
   }, h('span.nr-box', on ? icon('check', 11) : null), 'Hide not relevant', on && hiddenText ? h('span.muted.small', '· ' + hiddenText) : null);
+}
+
+/** “Hide removed” of the Mitigations items tab (the only place where removed items can be shown). */
+function removedToggle(ui, n, onchange) {
+  const on = !!ui.hideRemoved;
+  return h('button.btn.nr-toggle' + (on ? '.on' : ''), { type: 'button', id: 'rm-hideRemoved', 'aria-pressed': String(on),
+    tip: (on ? 'On: hides' : 'Off: shows') + ' the mitigation items marked as removed (column “Removed” = yes in “Risk mitigations individual”). Removed items are always hidden everywhere else.',
+    onclick: () => { ui.hideRemoved = !on; onchange(); } }, h('span.nr-box', on ? icon('check', 11) : null), 'Hide removed', on && n ? h('span.muted.small', '· ' + n + ' hidden') : null);
 }
 
 /* ---- rows & cards ------------------------------------------------------------------ */
@@ -294,11 +302,12 @@ const DETAIL = {
     const status = () => null;
     return h('div.detail',
       ctx.inline ? null : h('p.lead', m.text || h('span.muted', rmiText(m))),
+      m.removed ? h('p.note', icon('warning', 12), 'Marked as removed (column “Removed” = yes): hidden everywhere in the tool except here. Risks and groups must no longer list it; any that still do are reported as errors.') : null,
       m.base ? h('div.fields', field('Extended Description', m.extDescription ? h('span.text', m.extDescription) : null), field('Responsible', m.responsible || null), field('Comment', m.comment ? h('span.text', m.comment) : null))
         : h('p.note', icon('warning', 12), 'RMI ID “' + m.id + '” is not in “' + (M.sheetNames.rmi || 'Risk mitigations individual') + '”, so it has no text. Add a row with this ID there, or correct the ID where it is used.'),
       h('div.fields',
-        field('Mitigation group', m.groups.length ? h('div.chips.col', m.groups.map((g) => h('span.chips', chip(g, { label: true }), status(g)))) : h('span.tag.bad', 'no group'))),
-      section('Used in risks', m.occ.length ? h('div.rrows', nrLast(m.occ, (o) => o.risk).map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + ' of “RMI ID”' + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', 'No risk lists this RMI ID.'), { count: m.risks.length }),
+        m.removed ? null : field('Mitigation group', m.groups.length ? h('div.chips.col', m.groups.map((g) => h('span.chips', chip(g, { label: true }), status(g)))) : h('span.tag.bad', 'no group'))),
+      section('Used in risks', m.occ.length ? h('div.rrows', nrLast(m.occ, (o) => o.risk).map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + ' of “RMI ID”' + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', m.removed ? 'Not linked: the item is removed. Cells that still list it are reported under Issues.' : 'No risk lists this RMI ID.'), { count: m.risks.length }),
       m.listed.length ? section('Listed by groups', h('div.chips.col', m.listed.map((i) => h('span.chips', chip(i.group, { label: true }), h('span.muted.small', 'line ' + i.line + ' of “RMI ID”')))), { count: m.listed.length }) : null,
       issuesSection(m), m.base ? sourceLine(m) : null);
   },

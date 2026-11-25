@@ -106,7 +106,7 @@ breaks ties). Column lookup uses case-insensitive, whitespace-normalised header 
 | **Risk analysis** (“Risik analysis Alpha”) | One row per risk. Threat ID `T.BSI.<n>` and Threat `G 0.<n> <name>` may be **merged** across the risk rows of a threat (the reader fills merged cells). Risk ID `<letters>.<letters>.<n>`. **Threat relevance**: one value **per risk** (not per threat): not relevant = the words “not relevant” anywhere, any case (`relevanceOf`). Core values: comma list of Confidentiality/Integrity/Availability. Related assumptions: lines starting with `A.<n>`. Frequency/Effects: fixed lists (§7). **RMI ID**: the RMI IDs of the risk’s mitigation items, one per line. **Risk treatment option**: a formula that shows the texts of those IDs — **not read**, only checked to be a formula. |
 | **Architecture Assumptions** | One row per assumption, ID `A.<n>`. “Linked risks” is usually empty: links are **derived** from the risks’ “Related assumptions”. |
 | **Risk Mitigation Groups** | One row per group (RMG). **RMI ID**: the RMI IDs of the items in the group, one per line. **Content**: a formula that shows their texts — **not read**, only checked to be a formula. |
-| **Risk mitigations individual** | **Master list of mitigation items (RMI)** and the **only place that holds their text**: RMI ID + Mitigation item; Extended Description, Comment, Responsible. “Groups” and “Assigned” are formulas generated from the group sheet — **not read and not checked**. |
+| **Risk mitigations individual** | **Master list of mitigation items (RMI)** and the **only place that holds their text**: RMI ID + Mitigation item; Extended Description, Comment, Responsible. “Groups” and “Assigned” are formulas generated from the group sheet — **not read and not checked**. **Removed**: empty / no = active, yes = removed (any case), other = `F_VALUE` and active. |
 
 Core domain rules (implemented in §6):
 - **Risk index = frequency value × effects value** (rarely 2, medium 3, frequently 6, very frequently 7;
@@ -148,6 +148,10 @@ duplicates `W_DUP_TEXT`), then risks (threats are created on the fly per Threat 
 becomes an occurrence `occ` linked to an RMI via `readRmiRefs`); 5. components; 6. risks ↔ assumptions; 7. group “RMI
 ID” cells → items (`readRmiRefs`); 8. item ↔ group/risk links by ID, item checks (`C_NOT_IN_GROUP`, `W_UNUSED_RMI`,
 `W_MULTI_GROUP`, only for master-list items), derived `g.rmis`, `g.risks`, `risk.groups`; `W_UNCACHED`.
+Removed items (`m.removed`): `M.rmis` holds the **active** items only, `M.allRmis` also the removed ones (used only by
+the Mitigations items tab, its export and `snapshot`; `M.by.rmi` holds all so findings can open them). A reference to a
+removed item is not linked: it goes to `owner.removedRefs` and raises `C_RMI_REMOVED`; removed items get no usage or text
+checks (`C_DUP_ID` still applies).
 `readRmiRefs` is the single reader of “RMI ID” cells (tolerant parsing, `F_RMI_REF`, `C_RMI_UNKNOWN`, `W_DUP_LINE`);
 `checkFormula` emits `W_NOT_FORMULA` when “Risk treatment option” / “Content” is not a formula.
 
@@ -208,6 +212,10 @@ Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body o
    650 ms) opens details and never changes the focus (`clickTimer`, `lastClick`, `flowUndo`).
 9. **history** (§12). 10. **issues** – findings grouped by check / object / sheet & row.
 
+**Hide removed** (`removedToggle`, `state.ui.mit.hideRemoved`, on by default) exists only in the Mitigations items tab:
+it is the only place where removed items can appear (with its own search). Everywhere else they are absent because
+views read `M.rmis`.
+
 **Hide not relevant** (`nrToggle` in a `.nr-slot`, always the last control of the view, aligned right; state
 `state.ui.<view>.hideNR…`, on at start, kept while the tab is open): one
 independent toggle in Risks (`risks.hideNR`), Threats (`threats.hideNR`, list only), Mitigations (`mit.hideNRg` groups
@@ -241,7 +249,10 @@ log. A baseline never modifies an earlier log.
 Risks and groups record their linked RMI IDs (`rmis`); added/removed IDs are logged as `linesAdded` / `linesRemoved`
 and History shows them with the item’s current text.
 
-## 11. Editing the workbook (`07z-edit.js`)
+## 11. Editing the workbook (`07z-edit.js`) — DEPRECATED
+
+**Disabled in the UI** (owner decision 2026-11): `edit.enabled = false`, so `canEdit()` is false and no Edit / Add button
+appears. The code below is kept until editing is rebuilt; the E tests switch it on in the test build only. Do not extend it.
 
 Pipeline of every save:
 1. **High-level edit → `ChangeSet`** (`editRisk`, `renameRmi`, `addRmi`, `editThreat`, `editAssumption`,
@@ -327,6 +338,8 @@ Write tests use the browser’s private file system (OPFS) and shimmed pickers �
 | D16 | No introductory line for treatments; “Groups”/“Assigned” not checked; item linked to no risk (also if only a group lists it) = warning; item used by risks but in no group = error; unknown IDs reported only as `C_RMI_UNKNOWN`; tolerant reading of mis-typed “RMI ID” lines (`F_RMI_REF`) | Owner decisions (2026-11). Avoids double findings for one cause while keeping links usable. |
 | D17 | Text formula columns only checked to *be* formulas (`W_NOT_FORMULA`), their cached result is not compared with the IDs | The tool cannot evaluate Excel formulas; comparing the result would depend on the exact formula output. |
 | D18 | “Threat relevance” is a risk attribute; not relevant = the words “not relevant” anywhere; “Hide not relevant” per view, on by default; threats/groups/items hidden only when all their risks are not relevant; unused objects never hidden; empty or look-alike values = warning, counted as relevant | Owner decisions (2026-11). Never hide something on a guess; never hide a gap of the analysis. |
+| D19 | “Removed” column: removed items hidden everywhere except the items tab (“Hide removed”, on by default); links to them are errors and ignored; no usage/text checks for them; invalid values = format error, treated as active | Owner decisions (2026-11). One switch (`M.rmis` = active) so no view can forget to hide them. |
+| D20 | Workbook editing deprecated: UI disabled, code kept, still covered by the E tests via the test hook | Owner: editing will be rebuilt later; keeping the tested code avoids losing the safe-write pipeline. |
 
 ## 17. Known limitations and open points
 
