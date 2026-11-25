@@ -15,7 +15,7 @@ const cellRef = (r, c) => colName(c) + (r + 1);
 
 /** Collects the cell writes of one save. */
 class ChangeSet {
-  constructor() { this.cells = new Map(); this.rows = []; this.focus = null; }
+  constructor() { this.cells = new Map(); this.rows = []; this.focus = null; this.recalc = false; } // recalc: other cells' formulas depend on the change
   get(sh, r, c) { const k = sh.name + '|' + r + '|' + c; return this.cells.has(k) ? this.cells.get(k).value : str(rawCell(sh, r, c)); }
   set(sh, r, c, value, computed) {
     if (c == null) return;
@@ -44,7 +44,6 @@ function spelling(list, item, rawOf) {
 const spellFreq = (it) => (it ? spelling(CFG.freq, it, (r) => [[r.freq, r.freqRaw], [r.freqAfter, r.freqAfterRaw]]) : '');
 const spellEffect = (it) => (it ? spelling(CFG.effect, it, (r) => [[r.effect, r.effectRaw], [r.effectAfter, r.effectAfterRaw]]) : '');
 const spellCat = (it) => (it ? spelling(CFG.categories, it, (r) => [[r.category, r.categoryRaw]]) : '');
-function commonIntro() { const n = new Map(); for (const r of M.risks) if (r.intro) n.set(r.intro, (n.get(r.intro) || 0) + 1); let b = '', c = 0; for (const [k, v] of n) if (v > c) { c = v; b = k; } return b || 'Risk treatment options:'; }
 const asmLine = (a) => a.id + ' ' + a.title;
 const cvText = (keys) => CFG.coreValues.filter((v) => keys.includes(v.key)).map((v) => v.label).join(', ');
 
@@ -66,54 +65,34 @@ function editRisk(cs, r, v) {
   cs.set(sh, r.row, C.freqAfter, spellFreq(fa)); cs.set(sh, r.row, C.effectAfter, spellEffect(ea));
   cs.set(sh, r.row, C.category, spellCat(cat));
   if (C.save != null) cs.set(sh, r.row, C.save, v.save);
-  if (v.intro !== (r.intro || '')) {
-    if (!v.intro && r.items.length) throw new Error('the introductory line cannot be empty while mitigation items follow it');
-    const lines = cs.get(sh, r.row, C.treatment).split('\n'), first = lines.findIndex((l) => l.trim());
-    if (r.intro && first >= 0) lines[first] = v.intro; else lines.unshift(v.intro);
-    cs.set(sh, r.row, C.treatment, lines.join('\n').replace(/^\n+/, ''));
-  }
   const changedAssess = ['freq', 'effect', 'freqAfter', 'effectAfter', 'category'].some((k) => (v[k] || '') !== (k === 'category' ? (r.category ? r.category.key : '') : (r[k] ? r[k].key : '')));
   if (changedAssess) computedRiskCells(cs, sh, r.row, C, f, e, fa, ea, cat && cat.key === 'acceptance');
 }
-function replaceInLine(cs, sh, row, col, lineNo, oldText, newText) {
-  const lines = cs.get(sh, row, col).split('\n'), i = lineNo - 1;
-  if (!lines[i] || !lines[i].includes(oldText)) throw new Error('line ' + lineNo + ' of ' + cellRef(row, col) + ' in “' + sh.name + '” no longer contains the expected text');
-  lines[i] = lines[i].replace(oldText, () => newText);
-  cs.set(sh, row, col, lines.join('\n'));
-}
-/** Renames a mitigation item everywhere the IDENTICAL text is written (risk analysis and group Content). */
+/** Renames a mitigation item: its text lives only in “Risk mitigations individual”; risks and groups show it through formulas. */
 function renameRmi(cs, m, text) {
-  const old = m.text;
-  for (const o of m.occ) if (o.text === old) replaceInLine(cs, M.sheetObj.risk, o.risk.row, M.cols.risk.treatment, o.line, old, text);
-  for (const i of m.listed) if (i.text === old) replaceInLine(cs, M.sheetObj.group, i.group.row, M.cols.group.content, i.line, old, text);
-  if (m.base) { const sh = M.sheetObj.rmi, c = M.cols.rmi.text, cur = cs.get(sh, m.row, c); if (!cur.includes(old)) throw new Error('the RMI row of ' + m.id + ' no longer contains the text'); cs.set(sh, m.row, c, cur.replace(old, () => text)); }
+  if (!m.base) throw new Error('RMI ID ' + m.id + ' is not in “' + M.sheetNames.rmi + '”, so it has no text to change');
+  if (M.rmis.some((x) => x.base && x !== m && x.text === text)) throw new Error('this text is already used by ' + M.rmis.find((x) => x.base && x !== m && x.text === text).id);
+  cs.set(M.sheetObj.rmi, m.row, M.cols.rmi.text, text);
+  cs.recalc = true;
 }
 function editRmiFields(cs, m, v) { const sh = M.sheetObj.rmi, X = M.cols.rmi; cs.set(sh, m.row, X.ext, v.ext); cs.set(sh, m.row, X.comment, v.comment); cs.set(sh, m.row, X.responsible, v.responsible); }
-function yesSpelling() { const n = new Map(); for (const m of M.rmis) if (m.base && /^(s[ií]|yes|y|ja)$/i.test(m.assignedRaw || '')) n.set(m.assignedRaw, (n.get(m.assignedRaw) || 0) + 1); let b = 'Si', c = 0; for (const [k, x] of n) if (x > c) { c = x; b = k; } return b; }
-function addRmi(cs, risk, text, group, newId) {
-  const sh = M.sheetObj.risk, C = M.cols.risk;
-  let cur = cs.get(sh, risk.row, C.treatment);
-  if (!cur.trim()) cur = commonIntro();
-  cs.set(sh, risk.row, C.treatment, cur.replace(/\n+$/, '') + '\n- ' + text);
-  if (!group.items.some((i) => i.text === text)) {
-    const gs = M.sheetObj.group, g = cs.get(gs, group.row, M.cols.group.content);
-    cs.set(gs, group.row, M.cols.group.content, (g.trim() ? g.replace(/\n+$/, '') + '\n' : '') + '- ' + text);
+/** Appends an RMI ID as a new line of an “RMI ID” cell. */
+function appendRmiId(cs, sh, row, col, id) { const cur = cs.get(sh, row, col); cs.set(sh, row, col, cur.trim() ? cur.replace(/\s+$/, '') + '\n' + id : id); }
+/**
+ * Links a mitigation item to a risk: its RMI ID is appended to the risk's “RMI ID” cell and, unless the group already
+ * lists it, to the group's “RMI ID” cell. A new item (m = null) also gets a row in “Risk mitigations individual”
+ * (RMI ID + text; “Groups” / “Assigned” get the formulas of the row above).
+ */
+function addRmi(cs, risk, m, text, group, newId) {
+  const id = m ? m.id : newId;
+  appendRmiId(cs, M.sheetObj.risk, risk.row, M.cols.risk.rmiIds, id);
+  if (!group.items.some((i) => i.rmi.id === id)) appendRmiId(cs, M.sheetObj.group, group.row, M.cols.group.rmiIds, id);
+  if (!m) {
+    const X = M.cols.rmi, vals = new Map([[X.id, newId], [X.text, text]]);
+    for (const c of [X.groups, X.assigned]) if (c != null) vals.set(c, { computed: '' });
+    cs.addRow(M.sheetObj.rmi, vals);
   }
-  /* master list “Risk mitigations individual”: new item -> new row with its RMI ID; existing item -> add the group to “Groups” */
-  if (!M.sheetObj.rmi) return;
-  const rs = M.sheetObj.rmi, X = M.cols.rmi, base = M.rmis.find((m) => m.base && m.text === text);
-  if (!base) {
-    const vals = new Map([[X.id, newId], [X.text, text]]);
-    if (X.groups != null) vals.set(X.groups, group.id);
-    if (X.assigned != null) vals.set(X.assigned, yesSpelling());
-    cs.addRow(rs, vals);
-    return;
-  }
-  if (X.groups != null) {
-    const cur = cs.get(rs, base.row, X.groups), stated = cur.split(/\s*[\n,;]\s*/).map((x) => x.trim()).filter(Boolean);
-    if (!stated.includes(group.id)) cs.set(rs, base.row, X.groups, stated.length ? cur.replace(/\s+$/, '') + (cur.includes('\n') ? '\n' : ', ') + group.id : group.id);
-  }
-  if (X.assigned != null && !/^(s[ií]|yes|y|ja)$/i.test(cs.get(rs, base.row, X.assigned).trim())) cs.set(rs, base.row, X.assigned, yesSpelling());
+  cs.recalc = true;
 }
 function editThreat(cs, t, v) {
   const sh = M.sheetObj.risk, C = M.cols.risk, rows = uniq([t.row].concat(t.risks.map((r) => r.row)));
@@ -144,8 +123,8 @@ function addRisk(cs, v) {
   const i = f && e ? f.value * e.value : '', ia = fa && ea ? fa.value * ea.value : '';
   for (const [col, val] of [[C.threatId, t.id], [C.threat, t.name], [C.relevance, t.relevance], [C.riskId, v.riskId], [C.description, v.description], [C.component, v.component], [C.core, cvText(v.core)],
     [C.assumptions, v.assumptions.map((id) => asmLine(M.by.assumption.get(id))).join('\n')], [C.freq, spellFreq(f)], [C.effect, spellEffect(e)], [C.save, v.save], [C.category, spellCat(cat)],
-    [C.treatment, ''], [C.freqAfter, spellFreq(fa)], [C.effectAfter, spellEffect(ea)]]) if (col != null) vals.set(col, val);
-  for (const [col, val] of [[C.index, i], [C.indexAfter, ia], [C.reduction, i !== '' && ia !== '' ? i - ia : '']]) if (col != null) vals.set(col, { computed: val });
+    [C.rmiIds, ''], [C.freqAfter, spellFreq(fa)], [C.effectAfter, spellEffect(ea)]]) if (col != null) vals.set(col, val);
+  for (const [col, val] of [[C.index, i], [C.indexAfter, ia], [C.reduction, i !== '' && ia !== '' ? i - ia : ''], [C.treatment, '']]) if (col != null) vals.set(col, { computed: val });
   cs.addRow(M.sheetObj.risk, vals);
 }
 function addAssumption(cs, v) {
@@ -155,7 +134,8 @@ function addAssumption(cs, v) {
 }
 function addGroup(cs, v) {
   const C = M.cols.group, vals = new Map();
-  for (const [col, val] of [[C.id, v.id], [C.treatment, v.treatment], [C.name, v.name], [C.content, '']]) if (col != null) vals.set(col, val);
+  for (const [col, val] of [[C.id, v.id], [C.treatment, v.treatment], [C.name, v.name], [C.rmiIds, '']]) if (col != null) vals.set(col, val);
+  if (C.content != null) vals.set(C.content, { computed: '' });
   cs.addRow(M.sheetObj.group, vals);
 }
 
@@ -183,12 +163,18 @@ function cellEl(doc, row, r, c, create) {
   if (!create) return null;
   const el = mk(doc, row, 'c'); el.setAttribute('r', ref); row.insertBefore(el, before); return el;
 }
+/** formula: undefined = refuse formula cells, null = none, 'keep' = keep the existing one, string = new formula,
+    { text, array: true } = new single-cell array formula. */
 function writeCell(doc, el, value, formula) {
   const f = kidsOf(el, 'f')[0];
   if (f && formula === undefined) throw new Error('cell ' + el.getAttribute('r') + ' contains a formula — change it in Excel');
   for (const k of [...el.children]) if (k.localName !== 'f' || formula !== 'keep') el.removeChild(k);
   el.removeAttribute('t');
-  if (typeof formula === 'string' && formula !== 'keep') { const fe = mk(doc, el, 'f'); fe.textContent = formula; el.appendChild(fe); }
+  if (formula && formula !== 'keep') {
+    const fe = mk(doc, el, 'f');
+    if (typeof formula === 'object') { fe.setAttribute('t', 'array'); fe.setAttribute('ref', el.getAttribute('r')); fe.textContent = formula.text; } else fe.textContent = formula;
+    el.appendChild(fe);
+  }
   if (value === '' || value == null) return;
   if (typeof value === 'number') { const v = mk(doc, el, 'v'); v.textContent = String(value); el.appendChild(v); return; }
   el.setAttribute('t', 'inlineStr');
@@ -196,10 +182,12 @@ function writeCell(doc, el, value, formula) {
   t.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve');
   t.textContent = String(value); is.appendChild(t); el.appendChild(is);
 }
+/** Formula of a template cell, to be copied (shifted) into a new row: plain, shared, or single-cell array formula. */
 function formulaOf(doc, el, r) {
   const f = el && kidsOf(el, 'f')[0];
   if (!f) return null;
-  if (f.getAttribute('t') === 'array' || f.getAttribute('t') === 'dataTable') return null;
+  if (f.getAttribute('t') === 'dataTable') return null;
+  if (f.getAttribute('t') === 'array') { const ref = el.getAttribute('r'); return f.textContent && [ref, ref + ':' + ref].includes(f.getAttribute('ref')) ? { text: f.textContent, row: r, array: true } : null; }
   if (f.getAttribute('t') === 'shared') {
     const si = f.getAttribute('si');
     for (const x of doc.getElementsByTagNameNS('*', 'f')) if (x.getAttribute('t') === 'shared' && x.getAttribute('si') === si && x.getAttribute('ref') && x.textContent) {
@@ -253,7 +241,10 @@ async function buildEdited(cs) {
         const t = tpl ? cellEl(d, tpl, nr.tpl, c, false) : null, el = cellEl(d, row, nr.r, c, true);
         if (t && t.getAttribute('s')) el.setAttribute('s', t.getAttribute('s'));
         let v = nr.values.has(c) ? nr.values.get(c) : '', fml = null;
-        if (v && typeof v === 'object') { v = v.computed; const fo = formulaOf(d, t, nr.tpl); if (fo) { fml = shiftFormula(fo.text, nr.r - fo.row); formulas = true; } }
+        if (v && typeof v === 'object') {
+          v = v.computed; const fo = formulaOf(d, t, nr.tpl);
+          if (fo) { const txt = shiftFormula(fo.text, nr.r - fo.row); fml = fo.array ? { text: txt, array: true } : txt; formulas = true; if (fo.array && t.getAttribute('cm')) el.setAttribute('cm', t.getAttribute('cm')); }
+        }
         writeCell(d, el, v, fml);
         planned.set(sh.name + '|' + nr.r + '|' + c, v);
       }
@@ -269,7 +260,7 @@ async function buildEdited(cs) {
       for (const el of [td.documentElement, ...td.getElementsByTagNameNS('*', 'autoFilter')]) if (el.getAttribute('ref')) el.setAttribute('ref', extendRanges(el.getAttribute('ref'), lastRow1, newLast1));
     }
   }
-  if (formulas) {
+  if (formulas || cs.recalc) { // Excel recalculates every formula when it opens the file (e.g. texts shown from RMI IDs)
     const wbd = await doc(M.wb.wbPath);
     let calc = wbd.getElementsByTagNameNS('*', 'calcPr')[0];
     if (!calc) { calc = mk(wbd, wbd.documentElement, 'calcPr'); const after = ['definedNames', 'externalReferences', 'functionGroups', 'sheets'].map((n) => kidsOf(wbd.documentElement, n)[0]).find(Boolean); wbd.documentElement.insertBefore(calc, after ? after.nextSibling : null); }
@@ -311,7 +302,8 @@ async function commit(cs, title) {
   const owner = (sh, r) => { const o = [...M.risks, ...M.assumptions, ...M.groups, ...M.rmis.filter((x) => x.base)].find((x) => x.sheet === sh.name && x.row === r) || M.threats.find((t) => t.sheet === sh.name && t.row === r); return o ? o.id : ''; };
   const CALC = ' — calculated: risk index = frequency × effects, reduction = index before − index after';
   const rows = [...cs.cells.values()].map((ch) => [ch.sh.name, cellRef(ch.r, ch.c), str(ch.old), str(ch.value), header(ch.sh, ch.c) + (ch.computed ? CALC : ''), owner(ch.sh, ch.r)]);
-  for (const nr of cs.rows) for (const [c, v] of nr.values) rows.push([nr.sh.name, cellRef(nr.r, c), '', str(v && typeof v === 'object' ? v.computed : v), header(nr.sh, c) + (v && typeof v === 'object' ? CALC : ''), 'new row']);
+  const CALC_ROW = ' — calculated: formula of the row above (if it has one)';
+  for (const nr of cs.rows) for (const [c, v] of nr.values) rows.push([nr.sh.name, cellRef(nr.r, c), '', str(v && typeof v === 'object' ? v.computed : v), header(nr.sh, c) + (v && typeof v === 'object' ? (v.computed === '' ? CALC_ROW : CALC) : ''), 'new row']);
   const ok = await new Promise((res) => {
     let done = false; const finish = (v) => { if (!done) { done = true; res(v); } };
     openDialog('Save to Excel — ' + title, h('div',
@@ -368,7 +360,7 @@ function formDialog(title, fields, onSubmit) {
   openDialog(title, h('div', body, err, h('div.dialog-actions', h('button.btn', { type: 'button', onclick: () => document.querySelector('dialog[open]').close() }, 'Cancel'), h('button.btn.primary', { type: 'button', id: 'form-save', onclick: submit }, 'Review changes…'))), true);
 }
 const opt = (list, labelFn, empty) => (empty ? [{ value: '', label: empty }] : []).concat(list.map((x) => ({ value: x.key, label: labelFn ? labelFn(x) : x.label })));
-const singleLine = (s, what) => { if (/\n/.test(s)) throw new Error(what + ' must be a single line'); if (/\[[^\]]*\]?\s*$/.test(s)) throw new Error(what + ' must not end with a [bracketed] text'); return s.replace(/^-\s*/, ''); };
+const singleLine = (s, what) => { if (/\n/.test(s)) throw new Error(what + ' must be a single line'); return s.replace(/^-\s*/, ''); };
 function riskFields(r) {
   const t = r || {};
   return [
@@ -388,15 +380,15 @@ function nextPadded(list) { const m = list.map((x) => /^(\D*)(\d+)$/.exec(x)).fi
 function nextId(prefix, list) { let n = 0; for (const x of list) { const m = new RegExp('^' + prefix.replace(/\./g, '\\.') + '(\\d+)$').exec(x); if (m) n = Math.max(n, +m[1]); } return prefix + (n + 1); }
 
 const EDITORS = {
-  risk: (r) => formDialog('Edit risk ' + r.id, riskFields(r).concat([{ key: 'intro', label: 'Introductory line of “Risk treatment option”', value: r.intro || '', help: r.intro ? null : 'This risk has no introductory line; leave empty to keep it that way.' }]), (v) => {
+  risk: (r) => formDialog('Edit risk ' + r.id, riskFields(r), (v) => {
     const cs = new ChangeSet(); cs.focus = r; v.component = checkComponent(v.component); editRisk(cs, r, v); return cs; }),
   threat: (t) => formDialog('Edit threat ' + t.id, [{ key: 'name', label: 'Threat', value: t.name, required: true, help: 'Written in every row of ' + t.id + '.' }].concat(M.cols.risk.relevance != null ? [{ key: 'relevance', label: 'Threat relevance', type: 'textarea', value: t.relevance || '' }] : []), (v) => {
     const m = /^G 0\.(\d+) \S/.exec(v.name); if (!m) throw new Error('the threat must be written as “G 0.<number> <name>”');
     if (/^T\.BSI\.\d+$/.test(t.id) && +m[1] !== +t.id.split('.')[2]) throw new Error('the number must stay ' + t.id.split('.')[2] + ' (Threat ID ' + t.id + ')');
     const cs = new ChangeSet(); cs.focus = t; editThreat(cs, t, v); return cs; }),
   rmi: (m) => formDialog('Edit mitigation item ' + m.id, rmiExtraFields(m, [{ key: 'text', label: 'Text', type: 'textarea', rows: 2, value: m.text, required: true,
-    help: 'Replaced in every line with exactly this text: ' + plural(m.occ.filter((o) => o.text === m.text).length, 'line') + ' in the risk analysis, ' + plural(m.listed.filter((i) => i.text === m.text).length, 'line') + ' in group Content.' }]), (v) => {
-    const cs = new ChangeSet(); cs.focus = m; if (v.text !== m.text) renameRmi(cs, m, singleLine(v.text, 'The text')); if (m.base) editRmiFields(cs, m, v); return cs; }),
+    help: 'Written only in “' + M.sheetNames.rmi + '” (' + m.id + '). The risk analysis and the groups show it through their formulas: used by ' + plural(m.risks.length, 'risk') + ', listed by ' + plural(m.groups.length, 'group') + '.' }]), (v) => {
+    const cs = new ChangeSet(); cs.focus = m; const t = singleLine(v.text, 'The text'); if (t !== m.text) renameRmi(cs, m, t); editRmiFields(cs, m, v); return cs; }),
   group: (g) => formDialog('Edit group ' + g.id, [{ key: 'name', label: 'Security Measure Group', value: g.name, required: true }, { key: 'treatment', label: 'Risk treatment', value: g.treatment, list: uniq(M.groups.map((x) => x.treatment).filter(Boolean)) }], (v) => {
     const cs = new ChangeSet(); cs.focus = g; editGroup(cs, g, v); return cs; }),
   assumption: (a) => formDialog('Edit assumption ' + a.id, asmFields(a), (v) => { const cs = new ChangeSet(); cs.focus = a; editAssumption(cs, a, v); return cs; }),
@@ -414,31 +406,32 @@ function asmFields(a) {
     { key: 'comment', label: 'Comment', type: 'textarea', value: t.comment || '' }]);
 }
 function rmiExtraFields(m, fields) {
-  fields[0].help += m.base ? ' Also changed in “' + M.sheetNames.rmi + '” (' + m.id + ').' : ' This item is not in “' + (M.sheetNames.rmi || 'Risk mitigations individual') + '”.';
-  if (!m.base) return fields;
   const X = M.cols.rmi;
   return fields.concat([['ext', 'Extended Description', 'extDescription'], ['comment', 'Comment', 'comment'], ['responsible', 'Responsible', 'responsible']].filter((x) => X[x[0]] != null)
     .map(([key, label, prop]) => ({ key, label, type: key === 'responsible' ? null : 'textarea', value: m[prop] || '', list: key === 'responsible' ? uniq(M.rmis.map((x) => x.responsible).filter(Boolean)) : null })));
 }
 function addRmiDialog(r) {
-  const others = M.rmis.filter((m) => m.base && m.text && !r.items.some((o) => o.rmi === m));
+  if (!M.sheetObj.rmi || !M.sheetObj.group || M.cols.risk.rmiIds == null || M.cols.group.rmiIds == null) { toast('Adding a mitigation item needs the sheets “Risk mitigations individual” and “Risk Mitigation Groups” and the “RMI ID” columns.', 'error'); return; }
+  const others = M.rmis.filter((m) => m.base && m.text && !/#row/.test(m.key) && !r.items.some((o) => o.rmi === m));
   formDialog('Add mitigation item to ' + r.id, [
     { key: 'existing', label: 'Existing mitigation item', type: 'select', options: [{ value: '', label: '— new item (type the text below) —' }].concat(others.map((m) => ({ value: m.key, label: m.id + ' ' + truncate(m.text, 80) }))), value: '' },
     { key: 'text', label: 'New item text', type: 'textarea', rows: 2, value: '' },
-  ].concat(M.sheetObj.rmi ? [{ key: 'rmiId', label: 'RMI ID of the new item', value: nextPadded(M.rmis.filter((m) => m.base).map((m) => m.id)), help: 'Only for a new item: it is added as a new row to “' + M.sheetNames.rmi + '”.' }] : []).concat([
-    { key: 'group', label: 'Risk Mitigation Group', type: 'select', options: [{ value: '', label: '— choose —' }].concat(M.groups.map((g) => ({ value: g.id, label: g.id + ' ' + g.name }))), value: '', required: true, help: 'Required: the item is added to this group’s Content (unless it is already there).' },
-  ]), (v) => {
-    const m = v.existing ? M.by.rmi.get(v.existing) : null, text = m ? m.text : singleLine(v.text, 'The text');
-    if (!text) throw new Error('choose an existing item or type the text of a new one');
-    if (r.items.some((o) => o.text === text)) throw new Error(r.id + ' already lists this item');
-    const g = M.by.group.get(v.group); if (!g) throw new Error('choose a Risk Mitigation Group');
-    let newId = null;
-    if (!m && M.sheetObj.rmi && !M.rmis.some((x) => x.base && x.text === text)) {
+    { key: 'rmiId', label: 'RMI ID of the new item', value: nextPadded(M.rmis.filter((m) => m.base).map((m) => m.id)), help: 'Only for a new item: it is added as a new row (RMI ID + text) to “' + M.sheetNames.rmi + '”.' },
+    { key: 'group', label: 'Risk Mitigation Group', type: 'select', options: [{ value: '', label: '— choose —' }].concat(M.groups.map((g) => ({ value: g.id, label: g.id + ' ' + g.name }))), value: '', required: true, help: 'Required: the RMI ID is added to this group’s “RMI ID” cell (unless it is already there).' },
+  ], (v) => {
+    const m = v.existing ? M.by.rmi.get(v.existing) : null;
+    let text = null, newId = null;
+    if (!m) {
+      text = singleLine(v.text, 'The text');
+      if (!text) throw new Error('choose an existing item or type the text of a new one');
+      const same = M.rmis.find((x) => x.base && x.text === text);
+      if (same) throw new Error('this text already exists as ' + same.id + ' — choose it under “Existing mitigation item”');
       newId = v.rmiId; if (!newId) throw new Error('a new item needs an RMI ID');
-      if (/\s/.test(newId) || newId === 'RMI-X') throw new Error('the RMI ID must not contain spaces and must not be RMI-X');
+      if (/\s|[,;]/.test(newId)) throw new Error('the RMI ID must not contain spaces, commas or semicolons');
       if (M.rmis.some((x) => x.base && x.id.toLowerCase() === newId.toLowerCase())) throw new Error('RMI ID ' + newId + ' already exists');
-    }
-    const cs = new ChangeSet(); cs.focus = r; addRmi(cs, r, text, g, newId); return cs;
+    } else if (r.items.some((o) => o.rmi === m)) throw new Error(r.id + ' already lists ' + m.id);
+    const g = M.by.group.get(v.group); if (!g) throw new Error('choose a Risk Mitigation Group');
+    const cs = new ChangeSet(); cs.focus = r; addRmi(cs, r, m, text, g, newId); return cs;
   });
 }
 function addRiskDialog() {
@@ -472,7 +465,7 @@ function addGroupDialog() {
 }
 const canEdit = () => write.on && !!M && !!M.sheetObj && !!M.sheetObj.risk;
 function editButtons(o) {
-  if (!canEdit() || !EDITORS[o.type]) return null;
+  if (!canEdit() || !EDITORS[o.type] || (o.type === 'rmi' && (!o.base || !M.sheetObj.rmi))) return null;
   return [h('button.btn.ghost.sm', { type: 'button', id: 'edit-btn', tip: 'Edit in the workbook', onclick: () => EDITORS[o.type](o) }, icon('pen', 13), 'Edit'),
     o.type === 'risk' ? h('button.btn.ghost.sm', { type: 'button', id: 'add-rmi-btn', tip: 'Add a mitigation item (must belong to a group)', onclick: () => addRmiDialog(o) }, icon('plus', 13), 'Add item') : null];
 }

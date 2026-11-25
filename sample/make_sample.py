@@ -3,12 +3,17 @@
 All content is invented (a made-up "telemetry platform"). The workbook deliberately
 contains formatting and consistency mistakes so that every check of the tool can be
 seen in action.  Usage:  python3 make_sample.py [output.xlsx]
+
+Mitigation items (RMI) live only in "Risk mitigations individual" (RMI ID + text). Risks and groups list RMI IDs
+in their "RMI ID" column (one per line); "Risk treatment option" / "Content" / "Groups" / "Assigned" are formulas
+(openpyxl stores no results; Excel and LibreOffice calculate them when the file is opened).
 """
 import random
 import sys
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.worksheet.formula import ArrayFormula
 
 random.seed(2003)
 OUT = sys.argv[1] if len(sys.argv) > 1 else "sample-risk-workbook.xlsx"
@@ -146,30 +151,37 @@ for num, name, rel, comps in THREATS:
 def find(rid):
     return next(r for r in risks if r["rid"] == rid)
 
-def line(txt, grp, bullet="- ", tag=None):
-    t = tag if tag is not None else (f" [{grp}]" if grp else "")
-    return f"{bullet}{txt}{t}"
+# ---------------------------------------------------------------- master list of mitigation items (RMI ID + text)
+FOUR_EYES = "Introduce a four-eyes principle for configuration changes"      # used by a risk, listed by no group
+TABLETOP = "Run a yearly tabletop exercise"                                   # used by no risk and no group
+WAF = "Deploy a web application firewall in front of the API"                 # listed by a group, used by no risk
+canon = []
+for gid, (_, _, items) in GROUPS.items():
+    for t in items:
+        if t not in canon: canon.append(t)
+canon += [FOUR_EYES, TABLETOP, WAF]
+MASTER = [[f"RMI-{n + 1:03d}", t] for n, t in enumerate(canon)]
+MASTER.append([f"RMI-{len(MASTER) + 1:03d}", "Monitor certificate expiry dates"])   # same text as another RMI
+ID = {}
+for i, t in MASTER: ID.setdefault(t, i)
+TEXT = {i: t for i, t in MASTER}
 
 for r in risks:
-    r["lines"] = [line(t, g) for t, g in r["items"]]
-    r["intro"] = "The following measures reduce the risk:"
+    r["ids"] = [ID[t] for t, g in r["items"]]
 
 # ------------------------------------------------ deliberate mistakes (so every check has something to show)
 mit = [r for r in risks if r["cat"] == CATS[1] and len(r["items"]) >= 3]
-# group assignment not processed yet for the secure development measures
-for r in risks:
-    r["lines"] = [l.replace(" [RMG07]", "") if random.random() < .75 else l for l in r["lines"]]
 m = iter(mit)
-r = next(m); r["lines"][0] = r["lines"][0][2:]                                  # missing "- "
-r = next(m); r["lines"][1] = "– " + r["lines"][1][2:]                      # en dash instead of hyphen
-r = next(m); r["lines"][0] = "-" + r["lines"][0][2:]                            # missing space after hyphen
-r = next(m); r["lines"][1] = r["lines"][1].rsplit(" [", 1)[0] + " [RMG99]"      # unknown group
-r = next(m); r["lines"][0] = r["lines"][0].replace("[RMG", "[rmg")              # tag in lower case
-r = next(m); r["lines"][2] = r["lines"][2][:-1]                                 # missing closing bracket
-r = next(m); r["lines"][0] = r["lines"][0].rsplit(" [", 1)[0].upper()[:3] + r["lines"][0].rsplit(" [", 1)[0][3:].replace("  ", " ") + " [RMG04]"  # tagged for a group that does not list it
-r = next(m); r["lines"].append("- Introduce a four-eyes principle for configuration changes [RMG01]")  # tagged, missing in group content
-r = next(m); r["intro"] = None                                                  # intro line missing
-r = next(m); r["lines"].append(r["lines"][0])                                   # duplicate line
+r = next(m); r["ids"][0] = r["ids"][0].lower()                                  # RMI ID spelled differently (read as the ID)
+r = next(m); r["ids"][1] = r["ids"][1] + " " + TEXT[r["ids"][1]]                # text after the RMI ID
+r = next(m); r["ids"][0:2] = [r["ids"][0] + ", " + r["ids"][1]]                 # two RMI IDs on one line
+r = next(m); r["ids"].append("RMI-099")                                         # RMI ID not in the master list
+r = next(m); r["ids"].append(ID[FOUR_EYES])                                     # item that no group lists
+r = next(m); r["ids"].append(r["ids"][0])                                       # same RMI ID twice
+r = next(m); r["hand_typed"] = True                                             # treatment text typed instead of the formula
+r = next(m); r["ids"][2] = TEXT[r["ids"][2]]                                    # item text instead of its RMI ID
+r = next(m); r["ids"][1] = r["ids"][1].replace("-", " - ")                      # RMI ID with spaces (read as the ID)
+r = next(m); r["ids"].insert(1, "")                                             # empty line inside the cell (ignored, no finding)
 r = next(m); r["f_cell"] = "frequent"                                           # value not in list
 r = next(m); r["index_override"] = 21                                           # index does not match
 r = next(m); r["asm_override"] = "A.42 Devices are never connected to the internet"   # unknown assumption
@@ -180,23 +192,34 @@ r = next(m); r["fa"], r["ea"] = "", ""                                          
 r = next(m); r["fa"], r["ea"] = "very frequently", EFFECT_K[3]                  # risk rises after treatment
 r = next(m); r["red_override"] = 99                                             # wrong reduction value
 r = next(m); r["asm_title_override"] = True                                     # assumption cited with a different title
-r = next(m); r["lines"][1] = r["lines"][1].replace("the ", "the  ", 1)          # same item, different spacing
 dup = risks[7]; dup["rid"] = risks[6]["rid"]                                    # duplicate risk ID
 mis = next(x for x in risks if x["num"] == 32); mis["tid_override"] = "T.BSI.23"  # threat id / name mismatch (first row of the threat)
 
-# group content: copies of the item texts, with a few inconsistencies
-content = {g: [f"- {t}" for t in v[2]] for g, v in GROUPS.items()}
-content["RMG02"][1] = "- Pin the Backend Certificate in the device firmware"               # differs in case
-content["RMG05"][0] = "- Create encrypted data base backups each night"                    # reworded
-content["RMG06"][3] = "Remove unused services and open ports"                              # missing "- "
-content["RMG08"].append("- Deploy a web application firewall in front of the API")         # exists nowhere in the risk analysis
-content["RMG04"].append("- Run static code analysis in the build pipeline")                # listed here, but tagged RMG07 / untagged in the risks
-content["RMG03"][2] = "- Sign update packages with an offline key [RMG06]"                 # tag points to another group
+# group RMI IDs, with a few inconsistencies
+group_ids = {g: [ID[t] for t in v[2]] for g, v in GROUPS.items()}
+group_ids["RMG08"].append(ID[WAF])                                              # listed here, used by no risk
+group_ids["RMG04"].append(ID["Run static code analysis in the build pipeline"])  # item listed by two groups
+group_ids["RMG06"].append("RMI-098")                                            # RMI ID not in the master list
+group_ids["RMG03"][3:5] = [group_ids["RMG03"][3] + "; " + group_ids["RMG03"][4]]  # two RMI IDs on one line
+HAND_TYPED_GROUP = "RMG06"                                                      # Content typed instead of the formula
 
 # ---------------------------------------------------------------- workbook
 wb = Workbook()
+wb.calculation.fullCalcOnLoad = True   # openpyxl stores no formula results: let Excel calculate them on opening
 bold, head_fill = Font(bold=True), PatternFill("solid", fgColor="DDE6F0")
 wrap = Alignment(wrap_text=True, vertical="top")
+RMI_SHEET, GRP_SHEET = "'Risk mitigations individual'", "'Risk Mitigation Groups'"
+M_LAST = 1 + len(MASTER) + 60          # formula ranges leave room for new rows
+G_LAST = 1 + len(GROUPS) + 40
+
+def texts_of(ids_cell):
+    """Array formula: "- <text>" of every master item whose RMI ID is a line of ids_cell (in master order)."""
+    a, b = f"{RMI_SHEET}!$A$2:$A${M_LAST}", f"{RMI_SHEET}!$B$2:$B${M_LAST}"
+    return ArrayFormula(None, f'=_xlfn.TEXTJOIN(CHAR(10),TRUE,IF(ISNUMBER(FIND(CHAR(10)&{a}&CHAR(10),CHAR(10)&{ids_cell}&CHAR(10)))*({a}<>""),"- "&{b},""))')
+
+def set_array(ws, ref, f):
+    f.ref = ref
+    ws[ref] = f
 
 ws = wb.active
 ws.title = "Architecture Assumptions"
@@ -212,7 +235,7 @@ ws = wb.create_sheet("Risik analysis Alpha")
 ws["B2"] = "Risk analysis Alpha (fictional sample data)"; ws["B2"].font = Font(bold=True, size=14)
 HEAD = ["Threat ID", "Threat", "Threat relevance", "Risk ID", "Risk description", "Affected component", "Core values at risk", "Related assumptions",
         "Frequency of occurence", "Effects without additional safeguards", "Risk index", "Description for SAVe database (General Information)",
-        "Risk Treatment category", "Risk treatment option", "Frequency of occurence (after treatment)", "Effects after rollout of treatment ",
+        "Risk Treatment category", "RMI ID", "Risk treatment option", "Frequency of occurence (after treatment)", "Effects after rollout of treatment ",
         "Risk index (after treatment)", "Risk reduction value"]
 for i, hname in enumerate(HEAD):
     c = ws.cell(row=4, column=2 + i, value=hname); c.font = bold; c.fill = head_fill; c.alignment = wrap
@@ -233,20 +256,24 @@ for num, name, rel, comps in THREATS:
             asm = f"{r['asm'][0]} Something else entirely"
         f_cell = r.get("f_cell", r["f"])
         vals = [r["rid"], r["desc"], r.get("comp_override", r["comp"]), r["cia"], asm or None, f_cell, r["e"], None, r["save"], r["cat"],
-                "\n".join(([r["intro"]] if r["intro"] else []) + r["lines"]) or None, r["fa"] or None, r["ea"] or None, None, None]
+                "\n".join(r["ids"]) or None, None, r["fa"] or None, r["ea"] or None, None, None]
         for ci, v in enumerate(vals):
             ws.cell(row=row, column=5 + ci, value=v).alignment = wrap
+        if r.get("hand_typed"):
+            ws.cell(row=row, column=16, value="\n".join("- " + TEXT.get(i, i) for i in r["ids"][1:]))
+        else:
+            set_array(ws, f"P{row}", texts_of(f"O{row}"))
         idx = r.get("index_override", FREQ[r["f"]] * EFFECT[r["e"]])
         ws.cell(row=row, column=12, value=idx)
         if r["fa"] and r["ea"]:
             ia = FREQ[r["fa"]] * EFFECT[r["ea"]]
-            ws.cell(row=row, column=18, value=ia)
-            ws.cell(row=row, column=19, value=r.get("red_override", idx - ia))
+            ws.cell(row=row, column=19, value=ia)
+            ws.cell(row=row, column=20, value=r.get("red_override", idx - ia))
         row += 1
     if merged and len(rs) > 1:
         for col in (2, 3, 4):
             ws.merge_cells(start_row=first, start_column=col, end_row=row - 1, end_column=col)
-for col, w in zip("BCDEFGHIJKLMNOPQRS", [11, 30, 22, 10, 50, 18, 22, 34, 14, 18, 8, 34, 22, 70, 14, 18, 8, 10]):
+for col, w in zip("BCDEFGHIJKLMNOPQRST", [11, 30, 22, 10, 50, 18, 22, 34, 14, 18, 8, 34, 22, 12, 70, 14, 18, 8, 10]):
     ws.column_dimensions[col].width = w
 
 ws = wb.create_sheet("Assumed Risks Beta")
@@ -257,36 +284,32 @@ ws.cell(row=5, column=2, value="T.BSI.99"); ws.cell(row=5, column=5, value="R.BE
 
 ws = wb.create_sheet("Risk Mitigation Groups")
 ws["A1"] = "Legend"; ws["A2"] = "RMG = Risk Mitigation Group"; ws["A3"] = "RMI = individual risk mitigation option"; ws["B5"] = "Some unrelated notes"
-for i, hname in enumerate(["Risk Mitigation Group ID", "Risk treatment", "Security Measure Group", "Content"]):
+for i, hname in enumerate(["Risk Mitigation Group ID", "Risk treatment", "Security Measure Group", "RMI ID", "Content"]):
     c = ws.cell(row=1, column=7 + i, value=hname); c.font = bold; c.fill = head_fill
-for ri, (gid, (treat, gname, _)) in enumerate(GROUPS.items()):
-    for ci, v in enumerate([gid, treat, gname, "\n".join(content[gid])]):
+for ri, (gid, (treat, gname, items)) in enumerate(GROUPS.items()):
+    for ci, v in enumerate([gid, treat, gname, "\n".join(group_ids[gid])]):
         ws.cell(row=2 + ri, column=7 + ci, value=v).alignment = wrap
-ws.column_dimensions["I"].width = 34; ws.column_dimensions["J"].width = 80
+    if gid == HAND_TYPED_GROUP:
+        ws.cell(row=2 + ri, column=11, value="\n".join("- " + t for t in items))
+    else:
+        set_array(ws, f"K{2 + ri}", texts_of(f"J{2 + ri}"))
+    ws.cell(row=2 + ri, column=11).alignment = wrap
+ws.column_dimensions["I"].width = 34; ws.column_dimensions["J"].width = 12; ws.column_dimensions["K"].width = 80
 
 # master list of individual mitigation items (headers start in A1)
 ws = wb.create_sheet("Risk mitigations individual")
 for i, hname in enumerate(["RMI ID", "Mitigation item", "Groups", "Assigned", " Extended Description", "Comment", "Responsible"]):
     c = ws.cell(row=1, column=1 + i, value=hname); c.font = bold; c.fill = head_fill
-canon = []
-for gid, (_, _, items) in GROUPS.items():
-    for t in items:
-        if t not in canon: canon.append(t)
-canon.append("Introduce a four-eyes principle for configuration changes")
-canon.append("Run a yearly tabletop exercise")                                   # not used anywhere -> warning
-canon.remove("Review access rights every quarter")                               # used, but missing here -> error
 people = ["Security Officer", "Platform Team", "Operations", "Development Lead"]
-for n, t in enumerate(canon):
-    groups = [g for g in GROUPS if ("- " + t) in content[g]]
-    stated = list(groups)
-    if t == "Disable debug interfaces in production devices": stated = ["RMG02"]          # wrong Groups -> error
-    assigned = "Si" if groups else "No"
-    if t == "Run a yearly tabletop exercise": assigned = "Si"                            # wrong Assigned -> error
-    row = [f"RMI-{n + 1:03d}", t, ("\n" if n % 2 else ", ").join(stated), assigned,
-           f"Implementation details for: {t.lower()}.", "" if n % 3 else "Reviewed in workshop", people[n % 4]]
+g_ids, g_rmi = f"{GRP_SHEET}!$G$2:$G${G_LAST}", f"{GRP_SHEET}!$J$2:$J${G_LAST}"
+for n, (rid, t) in enumerate(MASTER):
+    rr = 2 + n
+    row = [rid, t, None, None, f"Implementation details for: {t.lower()}.", "" if n % 3 else "Reviewed in workshop", people[n % 4]]
     for ci, v in enumerate(row):
-        ws.cell(row=2 + n, column=1 + ci, value=v or None).alignment = wrap
+        ws.cell(row=rr, column=1 + ci, value=v or None).alignment = wrap
+    set_array(ws, f"C{rr}", ArrayFormula(None, f'=_xlfn.TEXTJOIN(", ",TRUE,IF(ISNUMBER(FIND(CHAR(10)&A{rr}&CHAR(10),CHAR(10)&{g_rmi}&CHAR(10)))*({g_ids}<>""),{g_ids},""))'))
+    ws.cell(row=rr, column=4, value=f'=IF(C{rr}="","No","Si")')
 ws.column_dimensions["B"].width = 60; ws.column_dimensions["E"].width = 50
 
 wb.save(OUT)
-print("written", OUT, "-", len(risks), "risks")
+print("written", OUT, "-", len(risks), "risks,", len(MASTER), "mitigation items")

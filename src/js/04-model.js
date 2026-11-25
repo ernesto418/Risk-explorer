@@ -31,31 +31,10 @@ function parseEnum(raw, list) {
   return { item: null, exact: false };
 }
 
-/** Parses one mitigation line ("- text [GROUP]") from a treatment cell or a group Content cell. */
-function parseItemLine(raw, groupIdsLower) {
-  let s = raw.trim();
-  const out = { text: '', bullet: 'ok', bulletChar: '' };
-  let m;
-  if ((m = /^-\s+/.exec(s))) s = s.slice(m[0].length);
-  else if (/^-(?=\S)/.test(s)) { out.bullet = 'nospace'; s = s.slice(1); }
-  else if ((m = /^([\u2013\u2014\u2010\u2011\u2012\u2212\u2022\u00B7*\u25AA\u25E6\u25CB\u25CF\u25BA>\u2192])\s*/.exec(s))) { out.bullet = 'char'; out.bulletChar = m[1]; s = s.slice(m[0].length); }
-  else out.bullet = 'none';
-
-  /* A trailing group tag such as “[RMG01]” is not used by the tool: it is removed silently before comparing texts. */
-  for (let guard = 0; guard < 4; guard++) {
-    m = /\s*\[([^\[\]]{0,40})\]?\s*[.;,]?\s*$/.exec(s);
-    if (!m || !/^[\w\s,;/|-]*$/.test(m[1]) || !/\[/.test(m[0])) break;
-    s = s.slice(0, m.index);
-  }
-  out.text = s.trim();
-  return out;
-}
-function bulletProblem(p) {
-  if (p.bullet === 'none') return 'line does not start with “- ”';
-  if (p.bullet === 'nospace') return 'missing space after the leading hyphen (“-text” instead of “- text”)';
-  if (p.bullet === 'char') return 'line starts with “' + p.bulletChar + '” instead of “- ” (hyphen + space)';
-  return null;
-}
+/** Loose form of an RMI ID, used only to recognise a mis-typed reference (case, spaces, dash variants). */
+const looseId = (s) => s.toLowerCase().replace(/[\u2010-\u2015\u2212_]/g, '-').replace(/\s+/g, '');
+/** “RMI-001”, or “RMI 17” for IDs that do not say RMI themselves. */
+const rmiName = (m) => (/^rmi/i.test(m.id) ? m.id : 'RMI ' + m.id);
 
 function buildModel(wb, fileInfo) {
   const M = {
@@ -97,11 +76,8 @@ function buildModel(wb, fileInfo) {
   const report = (c) => M.sheetReport[cand.indexOf(c)];
   if (!riskSheet) addIssue('F_STRUCT', 'No risk analysis sheet found. Expected a sheet (e.g. “Risk analysis Alpha”) with the column headers “Threat ID” and “Risk ID”.');
   if (!asmSheet) addIssue('F_STRUCT', 'No assumptions sheet found. Expected a sheet (e.g. “Architecture Assumptions”) with the column headers “Assumption ID” and “Title”.');
-  if (!rmiSheet) addIssue('F_STRUCT', 'No “Risk mitigations individual” sheet found. Expected a sheet with the column headers “RMI ID” and “Mitigation item”. Mitigation items are shown as RMI-X.');
+  if (!rmiSheet) addIssue('F_STRUCT', 'No “Risk mitigations individual” sheet found. Expected a sheet with the column headers “RMI ID” and “Mitigation item”. Mitigation items have no text and every RMI ID is unknown.');
   if (!rmgSheet) addIssue('F_STRUCT', 'No mitigation group sheet found. Expected a sheet (e.g. “Risk Mitigation Groups”) with the column header “Risk Mitigation Group ID”.');
-  for (const c of [riskSheet, asmSheet, rmgSheet, rmiSheet]) {
-    if (c && c.s.formulasWithoutValue > 0) addIssue('W_UNCACHED', plural(c.s.formulasWithoutValue, 'formula cell') + ' in “' + c.s.name + '” have no stored result; values computed by formulas (e.g. Risk index) cannot be read and are recalculated by the tool where possible.', { sheet: c.s.name });
-  }
 
   function columns(c, spec) {
     const cols = {};
@@ -114,7 +90,7 @@ function buildModel(wb, fileInfo) {
     return cols;
   }
 
-  /* ---- 1. mitigation groups (IDs first, contents later) ------------------------ */
+  /* ---- 1. mitigation groups (IDs first, their RMI IDs are resolved after the master list) ---- */
   let G = null;
   if (rmgSheet) {
     const sh = rmgSheet.s, name = sh.name;
@@ -124,14 +100,15 @@ function buildModel(wb, fileInfo) {
       id: [(n) => /^risk mitigation group id$/.test(n), 'Risk Mitigation Group ID', true],
       treatment: [(n) => /^risk treatment$/.test(n), 'Risk treatment', false],
       name: [(n) => /^security measure group$/.test(n), 'Security Measure Group', true],
-      content: [(n) => /^content$/.test(n), 'Content', true],
+      rmiIds: [(n) => /^rmi ids?$/.test(n), 'RMI ID', true],
+      content: [(n) => /^content$/.test(n), 'Content', false], // formula showing the texts of the RMI IDs: not read, only checked to be a formula
     });
     const hr = rmgSheet.rmg.row; report(rmgSheet).headerRow = hr + 1;
     const cell = (r, c) => (c == null ? '' : str(sh.rows[r] && sh.rows[r][c]));
     for (let r = hr + 1; r < sh.rows.length; r++) {
-      const id = cell(r, G.id), gname = cell(r, G.name), content = cell(r, G.content), treatment = cell(r, G.treatment);
-      if (!id && !gname && !content) continue;
-      const g = { type: 'group', id: id || '(row ' + (r + 1) + ')', name: gname, treatment, contentRaw: content, items: [], rmis: [], risks: [], issues: [], sheet: name, row: r };
+      const id = cell(r, G.id), gname = cell(r, G.name), rmiRaw = cell(r, G.rmiIds), treatment = cell(r, G.treatment);
+      if (!id && !gname && !rmiRaw) continue;
+      const g = { type: 'group', id: id || '(row ' + (r + 1) + ')', name: gname, treatment, rmiRaw, items: [], rmis: [], risks: [], issues: [], sheet: name, row: r };
       M.groups.push(g); report(rmgSheet).rows++;
       if (!id) addIssue('F_MISSING_ID', 'Group row without a Risk Mitigation Group ID.', { sheet: name, row: r, col: G.id, on: [g] });
       else if (!CFG.patterns.groupId.test(id)) addIssue('F_ID', 'Group ID “' + id + '” must be letters and digits only, without spaces.', { sheet: name, row: r, col: G.id, on: [g] });
@@ -140,8 +117,6 @@ function buildModel(wb, fileInfo) {
       if (!gname) addIssue('W_MISSING', 'Group “' + g.id + '” has no Security Measure Group name.', { sheet: name, row: r, col: G.name, on: [g] });
     }
   }
-  const groupLower = new Map(M.groups.map((g) => [g.id.replace(/[^A-Za-z0-9]/g, '').toLowerCase(), g]));
-  const groupIdsLower = new Set(groupLower.keys());
 
   /* ---- 2. assumptions --------------------------------------------------------- */
   if (asmSheet) {
@@ -177,57 +152,89 @@ function buildModel(wb, fileInfo) {
     }
   }
 
-  /* ---- 3. risk analysis --------------------------------------------------------- */
-  /* Mitigation items: the sheet “Risk mitigations individual” is the master list (RMI ID + text). Lines in the risk
-     analysis and in group Contents are matched to it by IDENTICAL text; a text that is not there becomes an “RMI-X”. */
-  const rmiByText = new Map(), baseRmis = [];
-  let unknownN = 0;
-  const newRmi = (text, extra) => { const m = { type: 'rmi', id: 'RMI-X', key: '', text, base: false, variants: new Map(), occ: [], listed: [], groups: [], risks: [], issues: [], ...extra }; M.rmis.push(m); return m; };
-  function getRmi(text) {
-    let m = rmiByText.get(text);
-    if (!m) { m = newRmi(text, { key: 'RMI-X#' + (++unknownN) }); rmiByText.set(text, m); }
-    return m;
-  }
+  /* ---- 3. mitigation items: the master list “Risk mitigations individual” --------------------------- */
+  /* It is the only place that holds the text of an item. Risks and groups refer to items by RMI ID (column “RMI ID”,
+     one ID per line); their text columns (“Risk treatment option”, “Content”) are formulas and are not read. */
+  const rmiById = new Map(), rmiLoose = new Map(), rmiByText = new Map(), unknownById = new Map(), baseRmis = [];
+  const newRmi = (extra) => { const m = { type: 'rmi', id: '', key: '', text: '', base: false, occ: [], listed: [], groups: [], risks: [], issues: [], ...extra }; M.rmis.push(m); return m; };
   let X = null;
   if (rmiSheet) {
     const sh = rmiSheet.s, name = sh.name;
     M.sheetNames.rmi = name; M.sheetObj = M.sheetObj || {}; M.sheetObj.rmi = sh;
     X = M.colsRmi = columns(rmiSheet, {
       id: [(n) => /^rmi id$/.test(n), 'RMI ID', true], text: [(n) => /^mitigation item$/.test(n), 'Mitigation item', true],
+      /* “Groups” / “Assigned” are generated by formulas in the workbook: not read; located only so new rows get their formulas */
       groups: [(n) => /^groups?$/.test(n), 'Groups', false], assigned: [(n) => /^assigned$/.test(n), 'Assigned', false],
       ext: [(n) => /^extended description$/.test(n), 'Extended Description', false], comment: [(n) => /^comments?$/.test(n), 'Comment', false], responsible: [(n) => /^responsible$/.test(n), 'Responsible', false],
     });
     const hr = rmiSheet.rmi.row; report(rmiSheet).headerRow = hr + 1;
     const cell = (r, c) => (c == null ? '' : str(sh.rows[r] && sh.rows[r][c]));
-    const byId = new Map();
     for (let r = hr + 1; r < sh.rows.length; r++) {
-      const id = cell(r, X.id), raw = cell(r, X.text);
-      if (!id && !raw) continue;
+      const id = cell(r, X.id), text = cell(r, X.text);
+      if (!id && !text) continue;
       report(rmiSheet).rows++;
-      const text = raw ? parseItemLine(raw, new Set()).text : '';
-      const m = newRmi(text, { id: id || '(row ' + (r + 1) + ')', key: id || '(row ' + (r + 1) + ')', base: true, sheet: name, row: r, groupsRaw: cell(r, X.groups), assignedRaw: cell(r, X.assigned),
+      const m = newRmi({ id: id || '(row ' + (r + 1) + ')', key: id || '(row ' + (r + 1) + ')', text, base: true, sheet: name, row: r,
         extDescription: cell(r, X.ext), comment: cell(r, X.comment), responsible: cell(r, X.responsible) });
       baseRmis.push(m);
       const loc = { sheet: name, row: r };
       if (!id) addIssue('F_MISSING_ID', 'Mitigation item without RMI ID.', { ...loc, col: X.id, on: [m] });
-      else if (byId.has(id)) { addIssue('C_DUP_ID', 'RMI ID “' + id + '” is used more than once (also in row ' + (byId.get(id).row + 1) + ').', { ...loc, col: X.id, on: [m, byId.get(id)] }); m.key = id + '#row' + (r + 1); }
-      else byId.set(id, m);
-      if (!text) addIssue('W_MISSING', 'RMI ' + m.id + ' has no text in “Mitigation item”.', { ...loc, col: X.text, on: [m] });
-      else if (rmiByText.has(text)) addIssue('C_DUP_ID', 'The text of RMI ' + m.id + ' is identical to RMI ' + rmiByText.get(text).id + ' (row ' + (rmiByText.get(text).row + 1) + ').', { ...loc, col: X.text, on: [m, rmiByText.get(text)] });
+      else if (/\s/.test(id)) addIssue('F_ID', 'RMI ID “' + id + '” contains spaces or line breaks.', { ...loc, col: X.id, on: [m] });
+      if (id && rmiById.has(id)) { addIssue('C_DUP_ID', 'RMI ID “' + id + '” is used more than once (also in row ' + (rmiById.get(id).row + 1) + ').', { ...loc, col: X.id, on: [m, rmiById.get(id)] }); m.key = id + '#row' + (r + 1); }
+      else if (id) { rmiById.set(id, m); if (!rmiLoose.has(looseId(id))) rmiLoose.set(looseId(id), m); }
+      if (!text) addIssue('W_MISSING', rmiName(m) + ' has no text in “Mitigation item”.', { ...loc, col: X.text, on: [m] });
+      else if (rmiByText.has(text)) addIssue('W_DUP_TEXT', rmiName(m) + ' has the same text as ' + rmiName(rmiByText.get(text)) + ' (row ' + (rmiByText.get(text).row + 1) + ').', { ...loc, col: X.text, on: [m, rmiByText.get(text)] });
       else rmiByText.set(text, m);
     }
   }
-  const baseLoose = new Map(baseRmis.filter((m) => m.text).map((m) => [looseKey(m.text), m]));
-  const baseBg = baseRmis.filter((m) => m.text).map((m) => { const k = looseKey(m.text); return { m, k, bg: bigrams(k) }; });
-  /** C_RMI_UNKNOWN for a line whose text is not in the master list, with the closest master item as hint. */
-  function unknownRmi(rmi, text, where, loc, on) {
-    if (rmi.base || !rmiSheet) return;
-    const k = looseKey(text), near = baseLoose.get(k);
-    let hint = null;
-    if (near) hint = 'Near-identical to ' + near.id + ' (' + diffHint(text, near.text) + '): “' + truncate(near.text, 110) + '”';
-    else { const bg = bigrams(k); let best = null, bs = 0; for (const c of baseBg) { const sc = dice(bg, c.bg, k.length, c.k.length); if (sc > bs) { bs = sc; best = c; } } if (best && bs >= 0.72) hint = 'Closest item (' + Math.round(bs * 100) + '% similar): ' + best.m.id + ' “' + truncate(best.m.text, 110) + '”'; }
-    addIssue('C_RMI_UNKNOWN', where + ': this mitigation item is not in “' + M.sheetNames.rmi + '” (no row with identical text), so it has no RMI ID.', { ...loc, hint, on });
+  /** Placeholder for an RMI ID that is not in the master list (one object per distinct ID, no text). */
+  const unknownRmi = (id) => { let m = unknownById.get(id); if (!m) { m = newRmi({ id, key: '?' + id }); unknownById.set(id, m); } return m; };
+  const resolveRmi = (tok) => { const m = rmiById.get(tok); if (m) return { m, exact: true }; const l = rmiLoose.get(looseId(tok)); return l ? { m: l, exact: false } : null; };
+  /**
+   * Reads one “RMI ID” cell (risk or group): one RMI ID per line. Tolerant: IDs separated by commas, semicolons or
+   * spaces, a different spelling (case, spaces, dashes) or text after the ID are read as the intended ID and reported
+   * as format errors. `mkItem(rmi, line, raw)` creates the link object; duplicates are reported and skipped.
+   */
+  function readRmiRefs(raw, owner, who, loc0, mkItem) {
+    const seen = new Map(), out = [], rmiSheetName = M.sheetNames.rmi || 'Risk mitigations individual';
+    (raw ? raw.split('\n') : []).forEach((ln, li) => {
+      const s = ln.trim();
+      if (!s) return;
+      const loc = { ...loc0, line: li + 1, excerpt: s }, at = who + ', line ' + (li + 1);
+      /* several IDs on one line: split on , or ; when every part looks like an ID, on spaces only when every word is a known ID */
+      let toks = [s];
+      const parts = s.split(/\s*[,;]\s*/).filter(Boolean), words = s.split(/\s+/);
+      if (parts.length > 1 && parts.every((x) => !/\s/.test(x) || resolveRmi(x))) toks = parts;
+      else if (words.length > 1 && words.every((x) => resolveRmi(x))) toks = words;
+      if (toks.length > 1) addIssue('F_RMI_REF', at + ': ' + toks.length + ' RMI IDs on one line. Write one RMI ID per line.', { ...loc, on: [owner] });
+      for (const tok of toks) {
+        let res = resolveRmi(tok), extra = null;
+        if (!res) { const fw = /^(\S+?)[:.–—-]*\s+(\S.*)$/.exec(tok); if (fw && resolveRmi(fw[1])) { res = resolveRmi(fw[1]); extra = fw[2]; } }
+        const rmi = res ? res.m : unknownRmi(tok);
+        if (seen.has(rmi)) { addIssue('W_DUP_LINE', who + ': ' + rmiName(rmi) + ' is listed twice (lines ' + seen.get(rmi) + ' and ' + (li + 1) + ').', { ...loc, on: [owner, rmi] }); continue; }
+        seen.set(rmi, li + 1);
+        const item = mkItem(rmi, li + 1, s);
+        out.push(item);
+        const on = [owner, rmi, item];
+        if (!res) {
+          const byText = rmiByText.get(tok);
+          let near = null, nd = 3;
+          if (!byText) for (const k of rmiById.keys()) { const d = levenshtein(looseId(k), looseId(tok)); if (d < nd) { nd = d; near = k; } }
+          const hint = byText ? 'This is the text of ' + byText.id + ' — write its RMI ID instead.' : near ? 'Did you mean ' + near + ' (“' + truncate(rmiById.get(near).text, 90) + '”)?' : null;
+          addIssue('C_RMI_UNKNOWN', at + ': RMI ID “' + truncate(tok, 60) + '” does not exist in “' + rmiSheetName + '”.', { ...loc, hint, on });
+        } else if (extra != null) addIssue('F_RMI_REF', at + ': only the RMI ID belongs in this cell, but “' + truncate(extra, 60) + '” follows ' + rmi.id + ' (read as ' + rmi.id + ').', { ...loc, on });
+        else if (!res.exact) addIssue('F_RMI_REF', at + ': “' + tok + '” is not written exactly like the RMI ID ' + rmi.id + ' (read as ' + rmi.id + ').', { ...loc, on });
+      }
+    });
+    return out;
   }
+  /** Warns when a text column that should be a formula (it shows the texts of the RMI IDs) holds typed text instead. */
+  function checkFormula(sh, r, col, rmiRaw, who, label, obj) {
+    if (col == null || sh.formulas.has(r + ':' + col)) return;
+    if (!str(sh.rows[r] && sh.rows[r][col]) && !rmiRaw) return;
+    addIssue('W_NOT_FORMULA', who + ': “' + label + '” is not a formula (typed text?), so Excel may show other mitigation items than the “RMI ID” cell. The tool reads only the RMI IDs.', { sheet: sh.name, row: r, col, on: [obj] });
+  }
+
+  /* ---- 4. risk analysis ----------------------------------------------------------- */
   let R = null;
   const rawComponents = [];
   if (riskSheet) {
@@ -248,7 +255,8 @@ function buildModel(wb, fileInfo) {
       index: [(n) => /^risk index/.test(n) && !/after/.test(n), 'Risk index', true],
       save: [(n) => /^description for save/.test(n), 'Description for SAVe database', false],
       category: [(n) => /^risk treatment category/.test(n), 'Risk Treatment category', true],
-      treatment: [(n) => /^risk treatment options?/.test(n), 'Risk treatment option', true],
+      rmiIds: [(n) => /^rmi ids?$/.test(n), 'RMI ID', true],
+      treatment: [(n) => /^risk treatment options?/.test(n), 'Risk treatment option', false], // formula showing the RMI texts: not read, only checked to be a formula
       freqAfter: [(n) => /^frequency.*after/.test(n), 'Frequency of occurence (after treatment)', true],
       effectAfter: [(n) => /^effects?.*after/.test(n), 'Effects after rollout of treatment', true],
       indexAfter: [(n) => /^risk index.*after/.test(n), 'Risk index (after treatment)', true],
@@ -289,8 +297,8 @@ function buildModel(wb, fileInfo) {
     for (let r = hr + 1; r < sh.rows.length; r++) {
       const tId = cell(r, R.threatId), tName = cell(r, R.threat), rel = cell(r, R.relevance);
       const rId = cell(r, R.riskId), description = cell(r, R.description), compRaw = cell(r, R.component);
-      const freqRaw = cell(r, R.freq), effectRaw = cell(r, R.effect), treatmentRaw = cell(r, R.treatment), categoryRaw = cell(r, R.category);
-      const hasRisk = !!(rId || description || compRaw || freqRaw || effectRaw || treatmentRaw || categoryRaw);
+      const freqRaw = cell(r, R.freq), effectRaw = cell(r, R.effect), rmiRaw = cell(r, R.rmiIds), categoryRaw = cell(r, R.category);
+      const hasRisk = !!(rId || description || compRaw || freqRaw || effectRaw || rmiRaw || categoryRaw);
       if (!tId && !tName && !hasRisk) continue;
       if (tId || tName) cur = getThreat(tId, tName, rel, r);
       if (!hasRisk) continue;
@@ -299,7 +307,7 @@ function buildModel(wb, fileInfo) {
         type: 'risk', id: rId || '(row ' + (r + 1) + ')', threat: cur, description, componentRaw: compRaw, components: [], coreRaw: cell(r, R.core), coreValues: [],
         assumptionsRaw: cell(r, R.assumptions), assumptionRefs: [], assumptions: [],
         freqRaw, effectRaw, freq: null, effect: null, index: null, indexCell: rawNum(r, R.index), indexCalc: null,
-        save: cell(r, R.save), categoryRaw, category: null, treatmentRaw, intro: '', items: [],
+        save: cell(r, R.save), categoryRaw, category: null, rmiRaw, items: [],
         freqAfterRaw: cell(r, R.freqAfter), effectAfterRaw: cell(r, R.effectAfter), freqAfter: null, effectAfter: null,
         indexAfter: null, indexAfterCell: rawNum(r, R.indexAfter), indexAfterCalc: null, reduction: rawNum(r, R.reduction), reductionRaw: cell(r, R.reduction),
         groups: [], issues: [], sheet: name, row: r,
@@ -381,32 +389,14 @@ function buildModel(wb, fileInfo) {
       risk.residual = risk.assumedAfter ? risk.index : risk.indexAfter;
       if (risk.index != null && risk.indexAfter != null && risk.indexAfter > risk.index) addIssue('W_AFTER_HIGHER', 'Risk ' + risk.id + ': risk index rises from ' + risk.index + ' to ' + risk.indexAfter + ' after treatment.', { sheet: name, row: r, col: R.indexAfter, on: [risk] });
 
-      /* treatment option cell -> individual mitigation items */
-      const tl = treatmentRaw ? treatmentRaw.split('\n') : [];
-      let first = true;
-      const seen = new Map();
-      tl.forEach((ln, li) => {
-        if (!ln.trim()) return;
-        const startsLikeItem = /^\s*[-\u2013\u2014\u2022*]\s*\S/.test(ln);
-        if (first) {
-          first = false;
-          if (!startsLikeItem) { risk.intro = ln.trim(); return; }
-          addIssue('F_INTRO', 'Risk ' + risk.id + ': the first line of “Risk treatment option” already looks like a mitigation item (the introductory line is missing).', { sheet: name, row: r, col: R.treatment, line: li + 1, on: [risk], excerpt: ln.trim() });
-        }
-        const p = parseItemLine(ln, groupIdsLower);
-        const occ = { risk, rmi: null, line: li + 1, raw: ln.trim(), text: p.text, groups: [], issues: [] };
-        const loc = { sheet: name, row: r, col: R.treatment, line: li + 1, excerpt: ln.trim() };
-        if (!p.text) { addIssue('F_EMPTY_ITEM', 'Risk ' + risk.id + ', line ' + (li + 1) + ': mitigation line has no text.', { ...loc, on: [risk] }); return; }
-        const rmi = getRmi(p.text);
-        occ.rmi = rmi; rmi.occ.push(occ); risk.items.push(occ);
-        unknownRmi(rmi, p.text, 'Risk ' + risk.id + ', line ' + (li + 1), { sheet: name, row: r, col: R.treatment, line: li + 1, excerpt: ln.trim() }, [risk, rmi, occ]);
-        rmi.variants.set(p.text, (rmi.variants.get(p.text) || 0) + 1);
-        const bp = bulletProblem(p);
-        if (bp) addIssue('F_BULLET', 'Risk ' + risk.id + ', line ' + (li + 1) + ': ' + bp + '.', { ...loc, on: [risk, rmi, occ] });
-        if (seen.has(rmi)) addIssue('W_DUP_LINE', 'Risk ' + risk.id + ': the same mitigation item appears on lines ' + seen.get(rmi) + ' and ' + (li + 1) + '.', { ...loc, on: [risk, rmi, occ] });
-        else seen.set(rmi, li + 1);
+      /* “RMI ID” cell -> links to the mitigation items of the master list */
+      risk.items = readRmiRefs(rmiRaw, risk, 'Risk ' + risk.id, { sheet: name, row: r, col: R.rmiIds }, (rmi, line, raw) => {
+        const occ = { risk, rmi, line, raw, text: rmi.text, groups: [], issues: [] };
+        rmi.occ.push(occ);
+        return occ;
       });
-      if (!risk.items.length && risk.category && risk.category.key === 'mitigation') addIssue('W_NO_ITEMS', 'Risk ' + risk.id + ' is treated by “' + risk.category.label + '” but lists no mitigation items.', { sheet: name, row: r, col: R.treatment, on: [risk] });
+      checkFormula(sh, r, R.treatment, rmiRaw, 'Risk ' + risk.id, 'Risk treatment option', risk);
+      if (!risk.items.length && risk.category && risk.category.key === 'mitigation') addIssue('W_NO_ITEMS', 'Risk ' + risk.id + ' is treated by “' + risk.category.label + '” but its “RMI ID” cell lists no mitigation item.', { sheet: name, row: r, col: R.rmiIds, on: [risk] });
     }
 
     /* risk reduction value: checked only if the column demonstrably holds "before − after" */
@@ -417,7 +407,7 @@ function buildModel(wb, fileInfo) {
     }
   }
 
-  /* ---- 4. components (one object per distinct name) ---------------------------- */
+  /* ---- 5. components (one object per distinct name) ---------------------------- */
   const atomic = new Set(rawComponents.filter((x) => !/[,;\n]/.test(x.raw)).map((x) => x.raw));
   const splitComponents = (raw) => {
     const parts = raw.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean);
@@ -457,7 +447,7 @@ function buildModel(wb, fileInfo) {
     }
   }
 
-  /* ---- 5. link risks <-> assumptions ---------------------------------------------- */
+  /* ---- 6. link risks <-> assumptions ---------------------------------------------- */
   for (const risk of M.risks) {
     for (const ref of risk.assumptionRefs) {
       const a = M.by.assumption.get(ref.id);
@@ -478,94 +468,46 @@ function buildModel(wb, fileInfo) {
     if (!a.risks.length && M.risks.length) addIssue('W_UNUSED_ASSUMPTION', 'Assumption ' + a.id + ' is not referenced by any risk.', { sheet: a.sheet, row: a.row, col: a.cols.id, on: [a] });
   }
 
-  /* ---- 6. group contents -> mitigation items ---------------------------------------- */
-  const riskLines = M.risks.flatMap((r) => r.items).map((o) => { const k = looseKey(o.text); return { o, k, bg: bigrams(k) }; });
+  /* ---- 7. group “RMI ID” cells -> mitigation items ------------------------------------ */
   for (const g of M.groups) {
-    const lines = g.contentRaw ? g.contentRaw.split('\n') : [];
-    const seen = new Map();
-    lines.forEach((ln, li) => {
-      if (!ln.trim()) return;
-      const p = parseItemLine(ln, groupIdsLower);
-      const loc = { sheet: g.sheet, row: g.row, col: G.content, line: li + 1, excerpt: ln.trim() };
-      const item = { group: g, rmi: null, line: li + 1, raw: ln.trim(), text: p.text, issues: [], match: 'exact' };
-      if (!p.text) { addIssue('F_EMPTY_ITEM', 'Group ' + g.id + ', line ' + (li + 1) + ': content line has no text.', { ...loc, on: [g] }); return; }
-      const key = looseKey(p.text);
-      const rmi = getRmi(p.text);
-      item.rmi = rmi; g.items.push(item); rmi.listed.push(item);
-      unknownRmi(rmi, p.text, 'Group ' + g.id + ', line ' + (li + 1), loc, [g, rmi, item]);
-      const bp = bulletProblem(p);
-      if (bp) addIssue('F_BULLET', 'Group ' + g.id + ', line ' + (li + 1) + ': ' + bp + '.', { ...loc, on: [g, rmi, item] });
-      if (seen.has(rmi)) addIssue('W_DUP_LINE', 'Group ' + g.id + ': the same item appears on lines ' + seen.get(rmi) + ' and ' + (li + 1) + '.', { ...loc, on: [g, rmi, item] });
-      else seen.set(rmi, li + 1);
-
-      const nearLine = !rmi.occ.length && riskLines.find((x) => x.k === key);
-      if (!rmi.occ.length && !nearLine) {
-        item.match = 'none';
-        let best = null, bs = 0;
-        const bg = bigrams(key);
-        for (const x of riskLines) { const s = dice(bg, x.bg, key.length, x.k.length); if (s > bs) { bs = s; best = x.o; } }
-        const hint = best && bs >= 0.72 ? 'Closest line (' + Math.round(bs * 100) + '% similar) in ' + best.risk.id + ': “' + truncate(best.text, 110) + '”' : null;
-        addIssue('C_NO_MATCH', 'Group ' + g.id + ', line ' + (li + 1) + ': no line with this text exists in any “Risk treatment option” cell.', { ...loc, hint, on: [g, rmi, item] });
-      } else if (nearLine) {
-        item.match = 'near';
-        const o = nearLine.o;
-        addIssue('C_NO_MATCH', 'Group ' + g.id + ', line ' + (li + 1) + ': no identical line in “Risk treatment option” — a near-identical one exists in ' + o.risk.id + ' (' + diffHint(p.text, o.text) + ').', { ...loc, hint: 'Risk analysis text: “' + truncate(o.text, 110) + '”', on: [g, rmi, item] });
-      }
+    g.items = readRmiRefs(g.rmiRaw, g, 'Group ' + g.id, { sheet: g.sheet, row: g.row, col: G.rmiIds }, (rmi, line, raw) => {
+      const item = { group: g, rmi, line, raw, text: rmi.text, issues: [] };
+      rmi.listed.push(item);
+      return item;
     });
-    if (!g.items.length) addIssue('W_EMPTY_GROUP', 'Group ' + g.id + ' has no content lines.', { sheet: g.sheet, row: g.row, col: G.content, on: [g] });
+    checkFormula(M.sheetObj.group, g.row, G.content, g.rmiRaw, 'Group ' + g.id, 'Content', g);
+    if (!g.items.length) addIssue('W_EMPTY_GROUP', 'Group ' + g.id + ' lists no RMI ID.', { sheet: g.sheet, row: g.row, col: G.rmiIds, on: [g] });
   }
 
-  /* ---- 7. link each mitigation line to the groups whose Content holds the IDENTICAL text ------------- */
-  const contentByText = new Map(), contentLines = [];
-  for (const g of M.groups) for (const i of g.items) {
-    if (!contentByText.has(i.text)) contentByText.set(i.text, []);
-    contentByText.get(i.text).push(g);
-    const k = looseKey(i.text); contentLines.push({ i, k, bg: bigrams(k) });
-  }
-  for (const rmi of M.rmis) {
-    for (const o of rmi.occ) {
-      o.groups = uniq(contentByText.get(o.text) || []);
-      if (o.groups.length) continue;
-      const nl = looseKey(o.text), near = (contentLines.find((c) => c.k === nl) || {}).i;
-      let hint = null;
-      if (near) hint = 'A near-identical line exists in the Content of ' + near.group.id + ' (' + diffHint(o.text, near.text) + '): “' + truncate(near.text, 110) + '”';
-      else {
-        const k = looseKey(o.text), bg = bigrams(k);
-        let best = null, bs = 0;
-        for (const c of contentLines) { const sc = dice(bg, c.bg, k.length, c.k.length); if (sc > bs) { bs = sc; best = c; } }
-        if (best && bs >= 0.72) hint = 'Closest Content line (' + Math.round(bs * 100) + '% similar) in ' + best.i.group.id + ': “' + truncate(best.i.text, 110) + '”';
-      }
-      addIssue('C_NOT_IN_GROUP', 'Risk ' + o.risk.id + ', line ' + o.line + ': no identical line exists in the Content of any Risk Mitigation Group.', { sheet: o.risk.sheet, row: o.risk.row, col: R.treatment, line: o.line, excerpt: o.raw, hint, on: [o.risk, rmi, o] });
-    }
-    rmi.groupsListed = uniq(rmi.listed.map((i) => i.group));
-    rmi.groups = rmi.occ.length ? uniq(rmi.occ.flatMap((o) => o.groups)) : rmi.groupsListed;
-    rmi.risks = uniq(rmi.occ.map((o) => o.risk));
-    if (rmi.groups.length > 1) { const at = rmi.occ[0] ? { sheet: rmi.occ[0].risk.sheet, row: rmi.occ[0].risk.row, col: R.treatment, line: rmi.occ[0].line } : {}; addIssue('W_MULTI_GROUP', 'The item “' + truncate(rmi.text, 80) + '” is listed in ' + rmi.groups.length + ' groups: ' + rmi.groups.map((g) => g.id).join(', ') + '.', { ...at, on: [rmi] }); }
+  /* ---- 8. links by RMI ID: item -> groups (the groups that list its ID), item -> risks, and their checks ---- */
+  const idList = (list) => list.slice(0, 6).map((o) => o.id).join(', ') + (list.length > 6 ? ', …' : '');
+  for (const m of M.rmis) {
+    m.groups = uniq(m.listed.map((i) => i.group));
+    m.risks = uniq(m.occ.map((o) => o.risk));
+    for (const o of m.occ) o.groups = m.groups;
+    if (!m.base) continue; // an RMI ID missing from the master list is reported once per use (C_RMI_UNKNOWN)
+    const at = { sheet: m.sheet, row: m.row, col: X.id }; // item-level findings point to the item's row in the master list
+    if (m.risks.length && !m.groups.length) addIssue('C_NOT_IN_GROUP', rmiName(m) + ' is used by ' + plural(m.risks.length, 'risk') + ' (' + idList(m.risks) + '), but no Risk Mitigation Group lists it in its “RMI ID” cell.', { ...at, on: [m, ...m.risks, ...m.occ] });
+    if (!m.risks.length) addIssue('W_UNUSED_RMI', rmiName(m) + ' is not linked to any risk' + (m.groups.length ? ': group ' + idList(m.groups) + ' lists it, but no risk lists it in its “RMI ID” cell.' : ' and is not listed by any group.'), { ...at, on: [m, ...m.groups, ...m.listed] });
+    if (m.groups.length > 1) addIssue('W_MULTI_GROUP', rmiName(m) + ' is listed by ' + m.groups.length + ' groups: ' + m.groups.map((g) => g.id).join(', ') + '.', { ...at, on: [m] });
   }
   for (const m of M.rmis) M.by.rmi.set(m.key, m);
-  /* “Groups” / “Assigned” of the master list must match the groups whose Content holds the item */
-  const yesRx = /^(s[ií]|yes|y|ja|true|1|x)$/i, noRx = /^(no|n|nein|false|0)$/i;
-  for (const m of baseRmis) {
-    const actual = uniq(m.listed.map((i) => i.group.id)).sort(natCmp), loc = { sheet: m.sheet, row: m.row };
-    if (!m.occ.length && !m.listed.length) addIssue('W_UNUSED_RMI', 'RMI ' + m.id + ' is used neither in the risk analysis nor in any group’s Content.', { ...loc, col: X.id, on: [m] });
-    if (X.groups != null) {
-      const stated = uniq(m.groupsRaw.split(/\s*[\n,;]\s*/).map((x) => x.trim()).filter(Boolean)).sort(natCmp);
-      if (stated.join('|') !== actual.join('|')) addIssue('C_RMI_GROUPS', 'RMI ' + m.id + ': “Groups” says ' + (stated.length ? stated.join(', ') : '(empty)') + ', but the item is in the Content of ' + (actual.length ? actual.join(', ') : 'no group') + '.', { ...loc, col: X.groups, excerpt: m.groupsRaw || null, on: [m] });
-    }
-    if (X.assigned != null) {
-      const a = m.assignedRaw.trim(), want = actual.length > 0;
-      if (!a) addIssue('W_MISSING', 'RMI ' + m.id + ': “Assigned” is empty.', { ...loc, col: X.assigned, on: [m] });
-      else if (!yesRx.test(a) && !noRx.test(a)) addIssue('F_VALUE', 'RMI ' + m.id + ': “Assigned” must be Si or No, found “' + a + '”.', { ...loc, col: X.assigned, on: [m] });
-      else if (yesRx.test(a) !== want) addIssue('C_RMI_GROUPS', 'RMI ' + m.id + ': “Assigned” says ' + a + ', but the item is in the Content of ' + (want ? actual.join(', ') : 'no group') + '.', { ...loc, col: X.assigned, on: [m] });
-    }
-  }
-  M.rmis.sort((a, b) => (a.base === b.base ? (a.base ? a.row - b.row : 0) : a.base ? -1 : 1));
+  M.rmis.sort((a, b) => (a.base === b.base ? (a.base ? a.row - b.row : natCmp(a.id, b.id)) : a.base ? -1 : 1));
   for (const g of M.groups) {
     g.rmis = uniq(g.items.map((i) => i.rmi));
-    g.risks = uniq(g.rmis.flatMap((m) => m.occ.filter((o) => o.groups.includes(g)).map((o) => o.risk)));
-    if (g.items.length && !g.risks.length && M.risks.length) addIssue('W_UNUSED_GROUP', 'Group ' + g.id + ': none of its Content lines appears with identical text in the risk analysis.', { sheet: g.sheet, row: g.row, col: G.id, on: [g] });
+    g.risks = uniq(g.rmis.flatMap((m) => m.risks));
+    if (g.items.length && !g.risks.length && M.risks.length) addIssue('W_UNUSED_GROUP', 'Group ' + g.id + ': none of the RMIs it lists is linked to a risk.', { sheet: g.sheet, row: g.row, col: G.id, on: [g] });
   }
   for (const risk of M.risks) risk.groups = uniq(risk.items.flatMap((o) => o.groups));
+
+  /* formulas without a stored result matter only in the columns the tool reads (the text columns are not read) */
+  const readCols = [[riskSheet, R, ['treatment']], [asmSheet, M.colsAsm, []], [rmgSheet, G, ['content']], [rmiSheet, X, ['groups', 'assigned']]];
+  for (const [c, cols, skip] of readCols) {
+    if (!c || !cols) continue;
+    const used = new Set(Object.keys(cols).filter((k) => !skip.includes(k) && cols[k] != null).map((k) => cols[k])), hr = report(c).headerRow - 1;
+    const n = c.s.uncached.filter(([r, col]) => r > hr && used.has(col)).length;
+    if (n) addIssue('W_UNCACHED', plural(n, 'formula cell') + ' in columns of “' + c.s.name + '” that the tool reads have no stored result; values computed by formulas (e.g. Risk index) cannot be read and are recalculated by the tool where possible.', { sheet: c.s.name });
+  }
 
   M.components.sort((a, b) => natCmp(a.name, b.name));
   M.wb = wb; M.cols = { risk: R, group: G, assumption: M.colsAsm || null, rmi: X };

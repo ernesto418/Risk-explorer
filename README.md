@@ -26,11 +26,17 @@ The app icon is embedded in the HTML (browser tab). For a desktop shortcut use `
 | Sheet | Columns (found by header name, any position) |
 |---|---|
 | Architecture Assumptions | Assumption ID, Title, Description, Affected components, Linked risks, Validity for Alpha Release, Validity for Beta Release, Comment |
-| Risik analysis Alpha | Threat ID, Threat, Threat relevance, Risk ID, Risk description, Affected component, Core values at risk, Related assumptions, Frequency of occurence, Effects without additional safeguards, Risk index, Description for SAVe database, Risk Treatment category, Risk treatment option, Frequency of occurence (after treatment), Effects after rollout of treatment, Risk index (after treatment), Risk reduction value |
-| Risk Mitigation Groups | Risk Mitigation Group ID, Risk treatment, Security Measure Group, Content |
-| Risk mitigations individual | RMI ID, Mitigation item, Groups, Assigned, Extended Description, Comment, Responsible |
+| Risik analysis Alpha | Threat ID, Threat, Threat relevance, Risk ID, Risk description, Affected component, Core values at risk, Related assumptions, Frequency of occurence, Effects without additional safeguards, Risk index, Description for SAVe database, Risk Treatment category, **RMI ID**, Risk treatment option *(formula)*, Frequency of occurence (after treatment), Effects after rollout of treatment, Risk index (after treatment), Risk reduction value |
+| Risk Mitigation Groups | Risk Mitigation Group ID, Risk treatment, Security Measure Group, **RMI ID**, Content *(formula)* |
+| Risk mitigations individual | RMI ID, Mitigation item, Groups *(formula)*, Assigned *(formula)*, Extended Description, Comment, Responsible |
 
 “Assumed Risks Beta” and any other sheet are ignored. Columns can be inserted or moved; only the header text matters.
+
+**Mitigation items (RMI)** are identified by their RMI ID. Their text lives only in “Risk mitigations individual”. A
+risk and a group list the IDs of their items in their **RMI ID** column, one ID per line; that is how items are linked
+to risks and to groups. “Risk treatment option”, “Content”, “Groups” and “Assigned” are formulas in the workbook and are
+not read (the app only warns when a “Risk treatment option” or “Content” cell is not a formula). Workbooks in the older
+text-based layout (no “RMI ID” columns) are not supported.
 
 ## What the app shows
 
@@ -45,7 +51,9 @@ cell and line). Every module can be exported to a new Excel file.
 Click **Read-only** in the top bar, enter your name and choose the repository folder that holds the workbook.
 
 - **Edit / Add**: edit fields of risks, threats, mitigation items, groups, assumptions and components; add risks,
-  assumptions, groups and mitigation items. Every save shows a cell-by-cell preview, is verified cell by cell before and
+  assumptions, groups and mitigation items. The text of a mitigation item is written only in “Risk mitigations
+  individual”; adding an item to a risk writes its RMI ID into the risk’s and the group’s “RMI ID” cells. New rows get
+  the formulas of the row above, and Excel recalculates the text formulas when it opens the saved file. Every save shows a cell-by-cell preview, is verified cell by cell before and
   after writing, and is refused if the file changed on disk. Close the workbook in Excel before saving (single user).
 - **Create baseline**: copies the workbook to `baselines/` and starts a new JSON log in `change-logs/`; every later
   save is appended to that log. Existing baselines and logs are never modified.

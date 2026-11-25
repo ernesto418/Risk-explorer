@@ -33,15 +33,16 @@ const valText = (v) => (v == null || v === '' ? '—' : String(v));
 function summaryText(s) {
   return Object.keys(s || {}).map((t) => { const x = s[t]; return (x.added || x.removed || x.modified) ? (TYPES[t] ? TYPES[t].plural : t) + ': ' + x.added + ' added, ' + x.removed + ' removed, ' + x.modified + ' modified' : null; }).filter(Boolean).join(' · ') || 'no object changes';
 }
-/** One changed object: what was added / removed / modified (field: old → new, mitigation lines + / −). */
+/** One changed object: what was added / removed / modified (field: old → new, linked RMI IDs + / −). */
 function changeRow(c) {
   const o = M && M.by[c.type] ? M.by[c.type].get(c.id) : null;
+  const ln = (x) => { const m = M && M.by.rmi.get(x); return m && m.text ? x + ' — ' + truncate(m.text, 120) : x; };
   const v = c.value || {};
   return h('div.chg',
     h('div.chg-head', o ? chip(o) : h('span.chip.plain', (TYPES[c.type] ? TYPES[c.type].label + ' ' : '') + c.id), h('span.tag.chg-' + c.change, c.change),
       c.change !== 'modified' ? h('span.muted.small', truncate(v.description || v.name || v.title || '', 140)) : null),
     Object.keys(c.fields || {}).length ? h('table.chg-t', h('tbody', Object.keys(c.fields).map((k) => h('tr', h('th', k), h('td.chg-from', valText(c.fields[k].from)), h('td', icon('arrow', 11)), h('td.chg-to', valText(c.fields[k].to)))))) : null,
-    (c.linesAdded || []).map((ln) => h('div.chg-line.add', '+ ' + ln)), (c.linesRemoved || []).map((ln) => h('div.chg-line.del', '− ' + ln)));
+    (c.linesAdded || []).map((x) => h('div.chg-line.add', '+ ' + ln(x))), (c.linesRemoved || []).map((x) => h('div.chg-line.del', '− ' + ln(x))));
 }
 /** Section for the side panel: every recorded change of this object, newest first. */
 function historySection(o) {

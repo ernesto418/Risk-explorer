@@ -109,20 +109,22 @@ breaks ties). Column lookup uses case-insensitive, whitespace-normalised header 
 
 | Sheet (role) | Key rules |
 |---|---|
-| **Risk analysis** (“Risik analysis Alpha”) | One row per risk. Threat ID `T.BSI.<n>` and Threat `G 0.<n> <name>` may be **merged** across the risk rows of a threat (the reader fills merged cells). Risk ID `<letters>.<letters>.<n>`. Core values: comma list of Confidentiality/Integrity/Availability. Related assumptions: lines starting with `A.<n>`. Frequency/Effects: fixed lists (§7). **Risk treatment option**: line 1 = introduction (ignored), every further line = one mitigation item written `- text`; a trailing `[ID]` is ignored and stripped. |
+| **Risk analysis** (“Risik analysis Alpha”) | One row per risk. Threat ID `T.BSI.<n>` and Threat `G 0.<n> <name>` may be **merged** across the risk rows of a threat (the reader fills merged cells). Risk ID `<letters>.<letters>.<n>`. Core values: comma list of Confidentiality/Integrity/Availability. Related assumptions: lines starting with `A.<n>`. Frequency/Effects: fixed lists (§7). **RMI ID**: the RMI IDs of the risk’s mitigation items, one per line. **Risk treatment option**: a formula that shows the texts of those IDs — **not read**, only checked to be a formula. |
 | **Architecture Assumptions** | One row per assumption, ID `A.<n>`. “Linked risks” is usually empty: links are **derived** from the risks’ “Related assumptions”. |
-| **Risk Mitigation Groups** | One row per group (RMG). **Content**: one mitigation item per line (`- text`). |
-| **Risk mitigations individual** | **Master list of mitigation items (RMI)**: RMI ID + Mitigation item text; Groups (RMG IDs, separated by line break or “, ”), Assigned (Si/No), Extended Description, Comment, Responsible. |
+| **Risk Mitigation Groups** | One row per group (RMG). **RMI ID**: the RMI IDs of the items in the group, one per line. **Content**: a formula that shows their texts — **not read**, only checked to be a formula. |
+| **Risk mitigations individual** | **Master list of mitigation items (RMI)** and the **only place that holds their text**: RMI ID + Mitigation item; Extended Description, Comment, Responsible. “Groups” and “Assigned” are formulas generated from the group sheet — **not read and not checked**. |
 
 Core domain rules (implemented in §6):
 - **Risk index = frequency value × effects value** (rarely 2, medium 3, frequently 6, very frequently 7;
   negligible 1, limited 3, considerable 5, threatening the existence 7). Bands: ≤10 low, 11–20 medium, >20 high.
 - **Accepted risks** without an after-treatment assessment keep their initial position/index in “after” views
   (`risk.assumedAfter`, `risk.residual`).
-- **Mitigation items are identified by IDENTICAL text.** A line belongs to the master-list item with exactly the same
-  text and takes its RMI ID; otherwise it is an **RMI-X** (error `C_RMI_UNKNOWN`).
-- **Item → group link = identical text in the group’s Content** (no tags). A risk line without such a Content line is
-  `C_NOT_IN_GROUP`; a Content line without such a risk line is `C_NO_MATCH`.
+- **Mitigation items are identified by RMI ID.** Risks and groups refer to master-list items through their “RMI ID”
+  cells; the text always comes from the master list. An ID that is not in the master list is `C_RMI_UNKNOWN` (once per
+  use). A line that is not exactly one ID (several IDs on one line, other spelling, text after the ID) is `F_RMI_REF`
+  and is read as the intended ID where it can be recognised.
+- **Item → group link = the group’s “RMI ID” cell lists the item’s ID.** An item used by a risk but listed by no group
+  is `C_NOT_IN_GROUP` (error); an item linked to no risk is `W_UNUSED_RMI` (warning), also when a group lists it.
 - **Components** come from “Affected component” (split on `;`/line breaks; on commas only if every part is a known
   single name).
 
@@ -131,7 +133,10 @@ Core domain rules (implemented in §6):
 - Own ZIP reader (central directory, ZIP64, stored/deflate via the browser’s `DecompressionStream`) and XML via
   `DOMParser`. Reads shared strings, inline strings, rich-text runs (phonetic runs skipped), `_xHHHH_` escapes,
   CR/LF → `\n`, booleans, cached formula results, merged ranges (filled with the top-left value).
-- Returns `{ sheets: [{ name, path, hidden, rows[r][c], merges, formulasWithoutValue }], zip, wbPath }`.
+- Returns `{ sheets: [{ name, path, hidden, rows[r][c], merges, formulas, uncached, formulasWithoutValue }], zip, wbPath }`.
+  `rows` holds the stored (cached) result of formula cells; `formulas` is the Set of `"r:c"` of every formula cell
+  (used by `W_NOT_FORMULA`); `uncached` lists formula cells without a stored result (no `<v>`, or an empty numeric
+  `<v/>` as written by openpyxl). `W_UNCACHED` counts only those in columns the model reads.
   `zip.list()` / `zip.raw()` expose entries and compressed bytes so §11 can rebuild the archive byte-for-byte.
 - Detects OLE files (legacy `.xls`, password/label-encrypted) and non-ZIP input with explicit messages.
 - **Why own reader:** written when libraries were not allowed; the subset needed is small and it gives byte-level
@@ -146,18 +151,23 @@ Core domain rules (implemented in §6):
 `lastRow` (per role, for appending), `wb`, `stats`.
 
 Order inside `buildModel` (matters for cross-references):
-1. locate sheets and columns; 2. groups (IDs only); 3. assumptions; 4. RMI master list, then risks (threats are created
-on the fly per Threat ID; each treatment line becomes an occurrence `occ` linked to an RMI); 5. components;
-6. risks ↔ assumptions; 7. group Content lines → items; 8. item ↔ group linking by identical text, RMI master checks
-(Groups/Assigned, unused), derived `g.rmis`, `g.risks`, `risk.groups`.
+1. locate sheets and columns; 2. groups (IDs and raw “RMI ID” only); 3. assumptions; 4. RMI master list (by ID, text
+duplicates `W_DUP_TEXT`), then risks (threats are created on the fly per Threat ID; each ID of the risk’s “RMI ID” cell
+becomes an occurrence `occ` linked to an RMI via `readRmiRefs`); 5. components; 6. risks ↔ assumptions; 7. group “RMI
+ID” cells → items (`readRmiRefs`); 8. item ↔ group/risk links by ID, item checks (`C_NOT_IN_GROUP`, `W_UNUSED_RMI`,
+`W_MULTI_GROUP`, only for master-list items), derived `g.rmis`, `g.risks`, `risk.groups`; `W_UNCACHED`.
+`readRmiRefs` is the single reader of “RMI ID” cells (tolerant parsing, `F_RMI_REF`, `C_RMI_UNKNOWN`, `W_DUP_LINE`);
+`checkFormula` emits `W_NOT_FORMULA` when “Risk treatment option” / “Content” is not a formula.
 
 Object shapes (main fields): every object has `type, id, issues[]`, and `sheet,row` when it maps to a row.
 - `risk`: `threat, description, components[], coreValues[], assumptions[], freq/effect/freqAfter/effectAfter` (config
-  items), `…Raw` strings, `index, indexAfter, residual, assumedAfter, category, intro, items[occ], groups[]`.
-- `occ` (line in a treatment cell): `risk, rmi, line, raw, text, groups[]`; group Content line `item`: `group, rmi, line, raw, text, match`.
-- `rmi`: `id` (master ID or `RMI-X`), `key` (unique), `base` (in master list), `text, occ[], listed[], groups[], risks[]`,
-  master fields `groupsRaw, assignedRaw, extDescription, comment, responsible`.
-- `threat`: `id, name, title, num, relevance, risks[]`; `group`: `id, name, treatment, items[], rmis[], risks[]`;
+  items), `…Raw` strings (incl. `rmiRaw`), `index, indexAfter, residual, assumedAfter, category, items[occ], groups[]`.
+- `occ` (one ID in a risk’s “RMI ID” cell): `risk, rmi, line, raw, text (= rmi.text), groups (= rmi.groups)`;
+  group `item` (one ID in a group’s “RMI ID” cell): `group, rmi, line, raw, text`.
+- `rmi`: `id`, `key` (unique; `?<id>` for unknown IDs), `base` (row in the master list; false = referenced ID that is not
+  there, no text), `text, occ[], listed[], groups[], risks[]`, master fields `extDescription, comment, responsible`.
+  UI shows the text through `rmiText(m)`.
+- `threat`: `id, name, title, num, relevance, risks[]`; `group`: `id, name, treatment, rmiRaw, items[], rmis[], risks[]`;
   `assumption`: `id, title, …, risks[], components[]`; `component`: `name, risks[], assumptions[]`.
 
 **Issue system.** `addIssue(code, msg, {sheet,row,col,line,excerpt,hint,on:[objects]})`. The code’s category
@@ -222,6 +232,8 @@ diff since it, plus `entries: []`. Every save from the editor appends `{type:'sa
 {sha256Before, sha256After}, cells[{sheet, cell, object, field, calculated, old, new}], summary, changes}` to the newest
 log. A baseline never modifies an earlier log.
 `snapshot(M)` / `diffSnapshots(a,b)` produce the object-level diff (risks, threats, assumptions, groups, master RMIs).
+Risks and groups record their linked RMI IDs (`rmis`); added/removed IDs are logged as `linesAdded` / `linesRemoved`
+and History shows them with the item’s current text.
 
 ## 11. Editing the workbook (`07z-edit.js`)
 
@@ -240,11 +252,16 @@ Pipeline of every save:
    only planned cells may differ; merges must be equal. Otherwise nothing is written.
 5. **Write** (`writeWorkbookFile`, §10), **log** (`appendSaveLog`), **reload** the workbook and reopen the object.
 
-Propagation rules (decided with the owner): mitigation-item text is replaced in every **identical** line (risk cells,
-group Content, master list row) — variants untouched; assumption titles in “Related assumptions”; component names in
-risks and assumptions; threat names in every row of the Threat ID. New values use the **spelling already used in the
-workbook** (`spelling()`); new rows go **after the last row** of the table. Adding an item requires a group; a new
-item requires an RMI ID and gets a row in the master list (Groups, Assigned updated).
+Propagation rules (decided with the owner): the text of a mitigation item is written **only** in its master-list row
+(risks and groups show it through their formulas; the save sets `cs.recalc` so `fullCalcOnLoad` makes Excel recalculate
+on opening); assumption titles in “Related assumptions”; component names in risks and assumptions; threat names in every
+row of the Threat ID. New values use the **spelling already used in the workbook** (`spelling()`); new rows go **after
+the last row** of the table. Adding an item to a risk appends its RMI ID as a new line to the risk’s “RMI ID” cell and,
+unless already there, to the chosen group’s (a group is required); a new item requires a new RMI ID and a text not used
+by another item and gets a master-list row (ID + text). Text columns that are formulas (“Risk treatment option”,
+“Content”, “Groups”, “Assigned”, Risk index…) are written as `{computed}` values in new rows: the formula of the row
+above is copied and shifted (plain, shared and single-cell array formulas; the `cm` attribute of dynamic arrays is
+kept).
 
 UI entry points: `editButtons(o)` in the side panel, `ADDERS` per view (`addButton`). Forms: `formDialog(title,
 fields, onSubmit)` where `onSubmit` returns a `ChangeSet` or throws a user-readable error.
@@ -291,8 +308,8 @@ Write tests use the browser’s private file system (OPFS) and shimmed pickers �
 | D2 | Own XLSX reader and writer | Written when no dependencies were allowed; needed subset is small; byte-level control needed for safe editing. |
 | D3 | Normalise Excel into linked objects (RMI per line, components, derived links) | Excel keeps several items per cell and no relations; views and checks need a graph. |
 | D4 | Columns found by header text | Owner inserts/moves columns; positions are unstable. |
-| D5 | Identity of mitigation items = identical text; master list “Risk mitigations individual” gives IDs; unknown = RMI-X | Items have no ID in the treatment/Content cells; exact text is the only unambiguous key. Owner requirement. |
-| D6 | Group tags `[ID]` ignored; links by identical Content text | Owner requirement; tags duplicated information and drifted. |
+| D5 | *(superseded by D15)* Identity of mitigation items = identical text; unknown = RMI-X | Was needed while items had no ID in the treatment/Content cells. |
+| D6 | *(superseded by D15)* Group tags `[ID]` ignored; links by identical Content text | Tags duplicated information and drifted. |
 | D7 | Issues always carry sheet/cell/line, three categories with distinct icons | The fix happens in Excel; users must find the cell. |
 | D8 | Read-only by default; write mode needs a name; three guarded write functions | “Nothing modified by mistake” is the top priority; author recorded in logs. |
 | D9 | Edits patch only the target cells, copy all other archive parts byte-for-byte, verify every cell | Avoids reformatting/losing Excel features; makes unintended changes detectable before writing. |
@@ -301,12 +318,18 @@ Write tests use the browser’s private file system (OPFS) and shimmed pickers �
 | D12 | Single user, refuse save if file changed on disk | Excel co-authoring cannot be joined from a local file; avoids overwriting others’ work. |
 | D13 | Connections: AND between clicks, OR within a Ctrl batch, double click = details | Owner requirements for exploring paths. |
 | D14 | Export via download, not file-system API | Keeps export unable to touch workbook or repository. |
+| D15 | Mitigation items identified by **RMI ID**: text only in “Risk mitigations individual”; risks and groups link through their “RMI ID” column (one ID per line); “Risk treatment option”, “Content”, “Groups”, “Assigned” are formulas and are not read; only the new format is supported | Owner “formalised” the workbook. One source of truth for the text; IDs are stable keys, so renaming an item touches one cell. |
+| D16 | No introductory line for treatments; “Groups”/“Assigned” not checked; item linked to no risk (also if only a group lists it) = warning; item used by risks but in no group = error; unknown IDs reported only as `C_RMI_UNKNOWN`; tolerant reading of mis-typed “RMI ID” lines (`F_RMI_REF`) | Owner decisions (2026-11). Avoids double findings for one cause while keeping links usable. |
+| D17 | Text formula columns only checked to *be* formulas (`W_NOT_FORMULA`), their cached result is not compared with the IDs | The tool cannot evaluate Excel formulas; comparing the result would depend on the exact formula output. |
 
 ## 17. Known limitations and open points
 
 - No delete of objects (risk, item, group, assumption) from the app.
 - Rewritten cells lose partial rich-text formatting (cell style kept).
-- New rows do not copy formulas of user columns other than Risk index / index after / reduction.
+- New rows copy formulas only for Risk index / index after / reduction and the text formula columns (“Risk treatment
+  option”, “Content”, “Groups”, “Assigned”); multi-cell array formulas are not copied.
+- Workbooks in the old text-based format (no “RMI ID” columns) are not supported: they show `F_STRUCT` and no item
+  links, so comparing an old baseline with a new one shows every link as changed once.
 - Look-alike headers (a new column starting with “Frequency”, “Effects”, “Risk index”, “Comment”…) placed left of the
   original can be picked instead; header detection takes the first match.
 - Write mode and History folder access need Chromium (File System Access API).

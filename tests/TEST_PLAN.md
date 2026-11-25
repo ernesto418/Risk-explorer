@@ -35,13 +35,14 @@ changed or deleted, and a log only ever gets entries appended.
 | F5 | wrong links | Connections hover and multi-focus show only the risks linked in the risk analysis |
 | F7 | wrong multi-select | Ctrl+click collects several objects; nothing applied until Ctrl is released; same type = OR (union of their risks) |
 | F8 | wrong click action | fast and slow double-click (second click after the redraw, same spot) open the details and leave the focus unchanged |
-| F9 | wrong item-group link | an item is linked to a group only when the identical text is in the group’s Content; every item without such a line is a consistency error (C_NOT_IN_GROUP); trailing [ID] tags are ignored |
-| F10 | wrong RMI identity | RMI IDs are taken from “Risk mitigations individual”; texts not there are RMI-X with one C_RMI_UNKNOWN per line; Groups/Assigned mismatches and unused items reported |
+| F9 | wrong item-group link | an item belongs exactly to the groups whose “RMI ID” cell lists it; an item used by risks but in no group is one consistency error (C_NOT_IN_GROUP); an item linked to no risk is a warning (W_UNUSED_RMI), also when a group lists it (badge on the group) |
+| F10 | wrong RMI identity / text | links come only from the “RMI ID” columns (checked against an independent reading of the cells); texts only from “Risk mitigations individual”; one C_RMI_UNKNOWN per use of an unknown ID (with “this is the text of …” hint); hand-typed “Risk treatment option” / “Content” cells are W_NOT_FORMULA and do not change the links |
+| F11 | silently mis-read RMI ID cells | other spelling, text after the ID, several IDs on one line (risk and group) are F_RMI_REF and read as the intended IDs; a duplicate ID is reported and kept once; formulas without results in unread columns do not raise W_UNCACHED |
 | X1 | broken or partial export | every module downloads a valid .xlsx (opened with openpyxl), row counts equal the model, About sheet present, no file-system write |
 | E1 | editing changes more than asked | edit one risk field → exactly that cell differs (independent openpyxl diff of the whole workbook); save appended to the current log |
-| E2 | partial propagation | rename a mitigation item → every identical line in risk cells and group Content changes, and nothing else in those cells |
-| E3 | item without group / ID | adding an item is refused without a group or with an existing RMI ID; the line is appended to the risk and the group Content, and a row (ID, text, Groups, Assigned) to “Risk mitigations individual” |
-| E4 | new row unlike the others | new risk appended after the last row, same cell styles as the row above, risk index computed |
+| E2 | text written in several places | rename a mitigation item → only its “Mitigation item” cell changes; risks and groups keep the link; fullCalcOnLoad is set (E1 checks it is not set when no formula is involved) |
+| E3 | item without group / ID | adding an item is refused without a group, with an existing RMI ID or with the text of an existing item; the RMI ID is appended as a new line to the risk and the group cell, and a row (ID, text, shifted Groups/Assigned formulas) to “Risk mitigations individual”; adding an existing item already in the group changes only the risk cell |
+| E4 | new row unlike the others | new risk and new group appended after the last row, same cell styles as the row above, risk index computed, “Risk treatment option” / “Content” array formula copied and shifted to the new row |
 | E5 | stale copies of a name | renaming a component / assumption title updates every risk and assumption that uses it |
 | E6 | overwriting someone else's version | if the workbook changed on disk since loading, nothing is saved; no file outside the workbook and the two folders |
 | E7 | logs rewritten | a baseline saves the Excel version and starts a new log; earlier logs stay byte-identical |
@@ -51,6 +52,7 @@ changed or deleted, and a log only ever gets entries appended.
 
 - Reader: ZIP64, stored entries, Strict OOXML, formulas without cached value, hidden/chart sheets, `~$` lock file.
 - Model: one minimal positive/negative fixture per check code; all 16 frequency × effects products and band limits;
+  “RMI ID” cells with dynamic-array formulas (`cm`) written by real Excel;
   accepted risks without “after” values; component splitting; duplicate IDs in change logs.
 - Write mode: revoked folder permission, disk full, two baselines within the same second, very long/special author names,
   workbook replaced between reading and writing, corrupted or foreign JSON in `change-logs/`.

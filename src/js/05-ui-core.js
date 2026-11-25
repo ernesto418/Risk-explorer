@@ -30,13 +30,17 @@ function objTitle(o) {
   switch (o.type) {
     case 'threat': return o.title || o.name;
     case 'risk': return o.description;
-    case 'rmi': return o.text;
+    case 'rmi': return rmiText(o);
     case 'group': return o.name;
     case 'assumption': return o.title;
     default: return '';
   }
 }
 function objLabel(o) { return o.type === 'component' ? o.name : o.id; }
+/** Text of a mitigation item; an RMI ID that is not in the master list has none. */
+function rmiText(m) { return m.text || (m.base ? '(no text in “Mitigation item”)' : 'Unknown RMI ID — not in “' + ((M && M.sheetNames.rmi) || 'Risk mitigations individual') + '”'); }
+/** One mitigation item in a list: RMI ID + text, opens the item. */
+function itemButton(m) { return h('button.item-text', { type: 'button', tip: m.id + ' — open this mitigation item', onclick: () => openObj(m) }, h('span.item-id', m.id), rmiText(m)); }
 
 /* ---- small visual atoms --------------------------------------------------------- */
 function chip(o, opts) {
@@ -219,12 +223,7 @@ function miniMatrix(r) {
 }
 function itemGroups(o) {
   if (o.groups.length) return o.groups.map((g) => chip(g));
-  return h('span.tag.bad', { tip: 'Consistency error: no identical line in the Content of any Risk Mitigation Group' }, 'no group');
-}
-function matchMark(item) {
-  if (item.match === 'exact') return h('span.match.ok', { tip: 'An identical line exists in the risk analysis' }, icon('check', 12));
-  if (item.match === 'near') return h('span.match.near', { tip: 'Only a near-identical line exists in the risk analysis' }, icon('consistency', 12));
-  return h('span.match.none', { tip: 'No such line exists in the risk analysis' }, icon('consistency', 12));
+  return h('span.tag.bad', { tip: 'Consistency error: no Risk Mitigation Group lists this RMI ID' }, 'no group');
 }
 
 const DETAIL = {
@@ -239,10 +238,8 @@ const DETAIL = {
         field('Related assumptions', r.assumptions.length ? h('div.chips.col', r.assumptions.map((a) => chip(a, { label: true }))) : null))),
       section('Treatment', h('div',
         h('div.treat-head', catTag(r), r.category ? h('span.muted.small', r.category.desc) : null),
-        r.intro ? h('p.intro', r.intro) : null,
-        r.items.length ? h('ul.items', r.items.map((o) => h('li.item',
-          h('button.item-text', { type: 'button', tip: o.rmi.id + ' — open this mitigation item', onclick: () => openObj(o.rmi) }, o.text),
-          h('span.item-side', itemGroups(o), issueBadges(o.issues))))) : h('div.muted.small', 'No individual mitigation items listed.')),
+        r.items.length ? h('ul.items', r.items.map((o) => h('li.item', itemButton(o.rmi),
+          h('span.item-side', itemGroups(o), issueBadges(o.issues))))) : h('div.muted.small', 'No mitigation items: the “RMI ID” cell is empty.')),
         { count: r.items.length }),
       r.save ? section('Description for SAVe database', h('p.text', r.save), { open: false }) : null,
       issuesSection(r), sourceLine(r));
@@ -264,31 +261,26 @@ const DETAIL = {
   rmi(m, ctx) {
     const status = () => null;
     return h('div.detail',
-      ctx.inline ? null : h('p.lead', m.text),
-      m.base ? h('div.fields', field('Extended Description', m.extDescription ? h('span.text', m.extDescription) : null), field('Responsible', m.responsible || null), field('Comment', m.comment ? h('span.text', m.comment) : null),
-        field('“Groups” / “Assigned” in the sheet', (m.groupsRaw || '—').replace(/\n/g, ', ') + ' / ' + (m.assignedRaw || '—'))) : h('p.note', icon('warning', 12), 'Not in “' + (M.sheetNames.rmi || 'Risk mitigations individual') + '”: this text has no RMI ID and is shown as RMI-X.'),
+      ctx.inline ? null : h('p.lead', m.text || h('span.muted', rmiText(m))),
+      m.base ? h('div.fields', field('Extended Description', m.extDescription ? h('span.text', m.extDescription) : null), field('Responsible', m.responsible || null), field('Comment', m.comment ? h('span.text', m.comment) : null))
+        : h('p.note', icon('warning', 12), 'RMI ID “' + m.id + '” is not in “' + (M.sheetNames.rmi || 'Risk mitigations individual') + '”, so it has no text. Add a row with this ID there, or correct the ID where it is used.'),
       h('div.fields',
-        field('Mitigation group', m.groups.length ? h('div.chips.col', m.groups.map((g) => h('span.chips', chip(g, { label: true }), status(g)))) : h('span.tag.bad', 'no group')),
-        m.variants.size > 1 ? field('Spellings found', h('ul.variants', [...m.variants].map(([txt, n]) => h('li', h('code.excerpt', txt), h('span.muted.small', ' × ' + n))))) : null),
-      section('Used in risks', m.occ.length ? h('div.rrows', m.occ.map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', 'No risk uses this item — it only appears in a group’s Content.'), { count: m.risks.length }),
-      m.listed.length ? section('Listed in group content', h('div.chips.col', m.listed.map((i) => h('span.chips', chip(i.group, { label: true }), h('span.muted.small', 'line ' + i.line), matchMark(i)))), { count: m.listed.length }) : null,
+        field('Mitigation group', m.groups.length ? h('div.chips.col', m.groups.map((g) => h('span.chips', chip(g, { label: true }), status(g)))) : h('span.tag.bad', 'no group'))),
+      section('Used in risks', m.occ.length ? h('div.rrows', m.occ.map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + ' of “RMI ID”' + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', 'No risk lists this RMI ID.'), { count: m.risks.length }),
+      m.listed.length ? section('Listed by groups', h('div.chips.col', m.listed.map((i) => h('span.chips', chip(i.group, { label: true }), h('span.muted.small', 'line ' + i.line + ' of “RMI ID”')))), { count: m.listed.length }) : null,
       issuesSection(m), m.base ? sourceLine(m) : null);
   },
   group(g, ctx) {
     const comps = uniq(g.risks.flatMap((r) => r.components));
-    const tagOnly = [];
     return h('div.detail',
       ctx.inline ? null : h('p.lead', g.name || h('span.muted', 'No group name')),
       h('div.stats',
         h('div.stat', h('b', g.rmis.length), 'mitigation items'), h('div.stat', h('b', g.risks.length), 'risks addressed'),
         h('div.stat', h('b', pill(maxOf(g.risks, (r) => r.index))), 'highest index before'), h('div.stat', h('b', pill(maxOf(g.risks, (r) => r.residual))), 'highest index after')),
       h('div.fields', field('Risk treatment', g.treatment ? h('span.text', g.treatment) : null), field('Components protected', comps.map((c) => chip(c)))),
-      section('Content', h('div',
-        g.items.length ? h('ul.items', g.items.map((i) => h('li.item',
-          h('button.item-text', { type: 'button', tip: i.rmi.id + ' — open this mitigation item', onclick: () => openObj(i.rmi) }, i.text),
-          h('span.item-side', h('span.muted.small', { tip: 'Risks using this item' }, plural(i.rmi.risks.length, 'risk')), matchMark(i), issueBadges(i.issues))))) : h('div.muted.small', 'The Content cell is empty.'),
-        tagOnly.length ? h('div.subhead', 'Tagged [' + g.id + '] in the risk analysis but missing from Content') : null,
-        tagOnly.length ? h('ul.items', tagOnly.map((m) => h('li.item', h('button.item-text', { type: 'button', onclick: () => openObj(m) }, m.text), h('span.item-side', h('span.muted.small', plural(m.risks.length, 'risk')), issueBadges(m.issues))))) : null),
+      section('Mitigation items', h('div',
+        g.items.length ? h('ul.items', g.items.map((i) => h('li.item', itemButton(i.rmi),
+          h('span.item-side', h('span.muted.small', { tip: 'Risks using this item' }, plural(i.rmi.risks.length, 'risk')), issueBadges(i.issues))))) : h('div.muted.small', 'The “RMI ID” cell of this group is empty.')),
         { count: g.items.length }),
       section('Risks addressed', riskList(g.risks), { count: g.risks.length }),
       issuesSection(g), sourceLine(g));
@@ -406,5 +398,5 @@ function applyRiskFilter(risks, f) {
     && (!f.before || levelOf(r.index) === f.before)
     && (!f.after || levelOf(r.residual) === f.after)
     && (!f.issues || r.issues.length)
-    && (!q || (r.id + ' ' + r.description + ' ' + r.componentRaw + ' ' + (r.threat ? r.threat.id + ' ' + r.threat.name : '') + ' ' + r.treatmentRaw).toLowerCase().includes(q)));
+    && (!q || (r.id + ' ' + r.description + ' ' + r.componentRaw + ' ' + (r.threat ? r.threat.id + ' ' + r.threat.name : '') + ' ' + r.items.map((o) => o.rmi.id + ' ' + o.rmi.text).join(' ')).toLowerCase().includes(q)));
 }
