@@ -28,7 +28,7 @@ The app icon is embedded in the HTML (browser tab). For a desktop shortcut use `
 | Architecture Assumptions | Assumption ID, Title, Description, Affected components, Linked risks, Validity for Alpha Release, Validity for Beta Release, Comment |
 | Risik analysis Alpha | Threat ID, Threat, Threat relevance, Risk ID, Risk description, Affected component, Core values at risk, Related assumptions, Frequency of occurence, Effects without additional safeguards, Risk index, Description for SAVe database, Risk Treatment category, **RMI ID**, Risk treatment option *(formula)*, Frequency of occurence (after treatment), Effects after rollout of treatment, Risk index (after treatment), Risk reduction value |
 | Risk Mitigation Groups | Risk Mitigation Group ID, Risk treatment, Security Measure Group, **RMI ID**, Content *(formula)* |
-| Risk mitigations individual | RMI ID, Mitigation item, Groups *(formula)*, Assigned *(formula)*, Extended Description, Comment, Responsible |
+| Risk mitigations individual | RMI ID, Mitigation item, Groups *(formula)*, Assigned *(formula)*, Extended Description, Comment, Responsible, Removed |
 
 “Assumed Risks Beta” and any other sheet are ignored. Columns can be inserted or moved; only the header text matters.
 
@@ -37,6 +37,21 @@ risk and a group list the IDs of their items in their **RMI ID** column, one ID 
 to risks and to groups. “Risk treatment option”, “Content”, “Groups” and “Assigned” are formulas in the workbook and are
 not read (the app only warns when a “Risk treatment option” or “Content” cell is not a formula). Workbooks in the older
 text-based layout (no “RMI ID” columns) are not supported.
+
+**Removed** (in “Risk mitigations individual”): empty or “no” = active, “yes” = removed (any case); any other value is
+a format error and the item stays active. Removed items are hidden everywhere in the app (search, counts, panels,
+Connections, exports) except **Mitigations → All items**, where **Hide removed** (on by default) can show them. They raise
+no “not used” / “no group” findings; a risk or group that still lists a removed item is a consistency error and that
+link is ignored.
+
+**Threat relevance** is read per risk row: despite its name it says whether the **risk** is relevant. A risk is *not
+relevant* when the text contains the words “not relevant” (any case, anywhere in the text); an empty cell or a text that
+only resembles them (“Not relevent”) is a warning and counts as relevant. **Hide not relevant** is on by default, and
+separately for each of Risks, Threats, Mitigations (groups tab and items tab) and Connections. It hides not-relevant
+risks, and threats, groups and items whose risks are all not relevant. Items and groups without any risk stay visible.
+Opening Connections from the panel of such an object switches its filter off (the button flashes). In the BSI coverage
+grid, threats with only not-relevant risks are always shown blank. Not-relevant risks are listed last and marked
+everywhere else.
 
 ## What the app shows
 
@@ -50,10 +65,10 @@ cell and line). Every module can be exported to a new Excel file.
 
 Click **Read-only** in the top bar, enter your name and choose the repository folder that holds the workbook.
 
-- **Edit / Add**: edit fields of risks, threats, mitigation items, groups, assumptions and components; add risks,
-  assumptions, groups and mitigation items. The text of a mitigation item is written only in “Risk mitigations
-  individual”; adding an item to a risk writes its RMI ID into the risk’s and the group’s “RMI ID” cells. New rows get
-  the formulas of the row above, and Excel recalculates the text formulas when it opens the saved file. Every save shows a cell-by-cell preview, is verified cell by cell before and
+- **Editing the workbook is currently disabled (deprecated)**: the Edit / Add buttons are not shown. The code is kept
+  and will be rebuilt later; until then the workbook is only changed in Excel. (When it was enabled, it edited fields of
+  risks, threats, items, groups, assumptions and components, and added risks, assumptions, groups and items, with a
+  cell-by-cell preview and verification.) Every save shows a cell-by-cell preview, is verified cell by cell before and
   after writing, and is refused if the file changed on disk. Close the workbook in Excel before saving (single user).
 - **Create baseline**: copies the workbook to `baselines/` and starts a new JSON log in `change-logs/`; every later
   save is appended to that log. Existing baselines and logs are never modified.

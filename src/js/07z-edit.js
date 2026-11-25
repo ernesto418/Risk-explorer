@@ -1,4 +1,9 @@
 /* ---------------------------------------------------------------------------
+ * DEPRECATED — editing of the workbook is DISABLED in the app (owner decision,
+ * 2026-11): `edit.enabled` is false, so no Edit / Add button is shown. The code
+ * is kept until editing is rebuilt; do not extend it — ask the owner first.
+ * The automated tests switch it on in the test build only (window.__rre.edit).
+ *
  * 07z-edit.js — OPTIONAL editing of the workbook (only in write mode).
  * Flow of every save: high-level edit -> list of cell writes / appended rows ->
  * preview -> new .xlsx built by patching only those cells (all other parts of
@@ -65,6 +70,7 @@ function editRisk(cs, r, v) {
   cs.set(sh, r.row, C.freqAfter, spellFreq(fa)); cs.set(sh, r.row, C.effectAfter, spellEffect(ea));
   cs.set(sh, r.row, C.category, spellCat(cat));
   if (C.save != null) cs.set(sh, r.row, C.save, v.save);
+  if (C.relevance != null) cs.set(sh, r.row, C.relevance, v.relevance);
   const changedAssess = ['freq', 'effect', 'freqAfter', 'effectAfter', 'category'].some((k) => (v[k] || '') !== (k === 'category' ? (r.category ? r.category.key : '') : (r[k] ? r[k].key : '')));
   if (changedAssess) computedRiskCells(cs, sh, r.row, C, f, e, fa, ea, cat && cat.key === 'acceptance');
 }
@@ -96,7 +102,7 @@ function addRmi(cs, risk, m, text, group, newId) {
 }
 function editThreat(cs, t, v) {
   const sh = M.sheetObj.risk, C = M.cols.risk, rows = uniq([t.row].concat(t.risks.map((r) => r.row)));
-  for (const row of rows) for (const [col, val] of [[C.threat, v.name], [C.relevance, v.relevance]]) {
+  for (const row of rows) for (const [col, val] of [[C.threat, v.name]]) { // “Threat relevance” belongs to each risk (editRisk)
     if (col == null || isMergeChild(sh, row, col)) continue;
     if (row === t.row || str(rawCell(sh, row, col)) !== '') cs.set(sh, row, col, val);
   }
@@ -121,7 +127,7 @@ function addRisk(cs, v) {
   const C = M.cols.risk, t = v.threat, vals = new Map();
   const f = CFG.freq.find((x) => x.key === v.freq), e = CFG.effect.find((x) => x.key === v.effect), fa = CFG.freq.find((x) => x.key === v.freqAfter), ea = CFG.effect.find((x) => x.key === v.effectAfter), cat = CFG.categories.find((x) => x.key === v.category);
   const i = f && e ? f.value * e.value : '', ia = fa && ea ? fa.value * ea.value : '';
-  for (const [col, val] of [[C.threatId, t.id], [C.threat, t.name], [C.relevance, t.relevance], [C.riskId, v.riskId], [C.description, v.description], [C.component, v.component], [C.core, cvText(v.core)],
+  for (const [col, val] of [[C.threatId, t.id], [C.threat, t.name], [C.relevance, v.relevance], [C.riskId, v.riskId], [C.description, v.description], [C.component, v.component], [C.core, cvText(v.core)],
     [C.assumptions, v.assumptions.map((id) => asmLine(M.by.assumption.get(id))).join('\n')], [C.freq, spellFreq(f)], [C.effect, spellEffect(e)], [C.save, v.save], [C.category, spellCat(cat)],
     [C.rmiIds, ''], [C.freqAfter, spellFreq(fa)], [C.effectAfter, spellEffect(ea)]]) if (col != null) vals.set(col, val);
   for (const [col, val] of [[C.index, i], [C.indexAfter, ia], [C.reduction, i !== '' && ia !== '' ? i - ia : ''], [C.treatment, '']]) if (col != null) vals.set(col, { computed: val });
@@ -299,7 +305,7 @@ async function commit(cs, title) {
   if (!cs.size) { toast('Nothing changed.'); return false; }
   /* column header + what the row is (e.g. “Risk reduction value” of R.API.3), so every line of the preview is self-explanatory */
   const header = (sh, c) => { const rep = M.sheetReport.find((x) => x.name === sh.name); return rep && rep.headerRow ? str(rawCell(sh, rep.headerRow - 1, c)) : ''; };
-  const owner = (sh, r) => { const o = [...M.risks, ...M.assumptions, ...M.groups, ...M.rmis.filter((x) => x.base)].find((x) => x.sheet === sh.name && x.row === r) || M.threats.find((t) => t.sheet === sh.name && t.row === r); return o ? o.id : ''; };
+  const owner = (sh, r) => { const o = [...M.risks, ...M.assumptions, ...M.groups, ...M.allRmis.filter((x) => x.base)].find((x) => x.sheet === sh.name && x.row === r) || M.threats.find((t) => t.sheet === sh.name && t.row === r); return o ? o.id : ''; };
   const CALC = ' — calculated: risk index = frequency × effects, reduction = index before − index after';
   const rows = [...cs.cells.values()].map((ch) => [ch.sh.name, cellRef(ch.r, ch.c), str(ch.old), str(ch.value), header(ch.sh, ch.c) + (ch.computed ? CALC : ''), owner(ch.sh, ch.r)]);
   const CALC_ROW = ' — calculated: formula of the row above (if it has one)';
@@ -336,7 +342,7 @@ async function commit(cs, title) {
     return true;
   } catch (e) { toast('Not saved: ' + (e && e.message ? e.message : e), 'error'); return false; } finally { edit.busy = false; document.body.classList.remove('busy'); }
 }
-const edit = { busy: false };
+const edit = { busy: false, enabled: false }; // DEPRECATED: enabled = false keeps every editing button out of the UI
 
 /* ---------- forms ---------- */
 function formDialog(title, fields, onSubmit) {
@@ -366,6 +372,8 @@ function riskFields(r) {
   return [
     { key: 'description', label: 'Risk description', type: 'textarea', value: t.description || '', required: true },
     { key: 'component', label: 'Affected component', value: t.componentRaw || '', list: M.components.map((c) => c.name), required: true, help: 'Pick an existing component or type a new name.' },
+  ].concat(M.cols.risk.relevance != null ? [{ key: 'relevance', label: 'Relevance (column “Threat relevance”)', value: t.relevanceRaw || '', list: uniq(M.risks.map((x) => x.relevanceRaw).filter(Boolean)),
+    help: 'Write “not relevant” (anywhere in the text) to mark this risk as not relevant; any other text counts as relevant.' }] : []).concat([
     { key: 'core', label: 'Core values at risk', type: 'checks', options: CFG.coreValues.map((c) => ({ value: c.key, label: c.label })), value: t.coreValues || [], required: true },
     { key: 'assumptions', label: 'Related assumptions', type: 'checks', options: M.assumptions.map((a) => ({ value: a.id, label: a.id + ' ' + truncate(a.title, 70) })), value: t.assumptions ? t.assumptions.map((a) => a.id) : [] },
     { key: 'freq', label: 'Frequency of occurrence', type: 'select', options: opt(CFG.freq), value: t.freq ? t.freq.key : '', required: true },
@@ -373,7 +381,7 @@ function riskFields(r) {
     { key: 'category', label: 'Risk treatment category', type: 'select', options: opt(CFG.categories), value: t.category ? t.category.key : '', required: true },
     { key: 'freqAfter', label: 'Frequency after treatment', type: 'select', options: opt(CFG.freq, null, '—'), value: t.freqAfter ? t.freqAfter.key : '' },
     { key: 'effectAfter', label: 'Effects after treatment', type: 'select', options: opt(CFG.effect, null, '—'), value: t.effectAfter ? t.effectAfter.key : '' },
-  ].concat(M.cols.risk.save != null ? [{ key: 'save', label: 'Description for SAVe database', type: 'textarea', value: t.save || '' }] : []);
+  ].concat(M.cols.risk.save != null ? [{ key: 'save', label: 'Description for SAVe database', type: 'textarea', value: t.save || '' }] : []));
 }
 const checkComponent = (s) => { if (/[;,\n]/.test(s)) throw new Error('a component name must not contain “;”, “,” or line breaks'); return s; };
 function nextPadded(list) { const m = list.map((x) => /^(\D*)(\d+)$/.exec(x)).filter(Boolean); if (!m.length) return ''; const p = m[0][1], w = m[0][2].length, n = Math.max(...m.filter((x) => x[1] === p).map((x) => +x[2])) + 1; return p + String(n).padStart(w, '0'); }
@@ -382,7 +390,7 @@ function nextId(prefix, list) { let n = 0; for (const x of list) { const m = new
 const EDITORS = {
   risk: (r) => formDialog('Edit risk ' + r.id, riskFields(r), (v) => {
     const cs = new ChangeSet(); cs.focus = r; v.component = checkComponent(v.component); editRisk(cs, r, v); return cs; }),
-  threat: (t) => formDialog('Edit threat ' + t.id, [{ key: 'name', label: 'Threat', value: t.name, required: true, help: 'Written in every row of ' + t.id + '.' }].concat(M.cols.risk.relevance != null ? [{ key: 'relevance', label: 'Threat relevance', type: 'textarea', value: t.relevance || '' }] : []), (v) => {
+  threat: (t) => formDialog('Edit threat ' + t.id, [{ key: 'name', label: 'Threat', value: t.name, required: true, help: 'Written in every row of ' + t.id + '.' }], (v) => {
     const m = /^G 0\.(\d+) \S/.exec(v.name); if (!m) throw new Error('the threat must be written as “G 0.<number> <name>”');
     if (/^T\.BSI\.\d+$/.test(t.id) && +m[1] !== +t.id.split('.')[2]) throw new Error('the number must stay ' + t.id.split('.')[2] + ' (Threat ID ' + t.id + ')');
     const cs = new ChangeSet(); cs.focus = t; editThreat(cs, t, v); return cs; }),
@@ -416,7 +424,7 @@ function addRmiDialog(r) {
   formDialog('Add mitigation item to ' + r.id, [
     { key: 'existing', label: 'Existing mitigation item', type: 'select', options: [{ value: '', label: '— new item (type the text below) —' }].concat(others.map((m) => ({ value: m.key, label: m.id + ' ' + truncate(m.text, 80) }))), value: '' },
     { key: 'text', label: 'New item text', type: 'textarea', rows: 2, value: '' },
-    { key: 'rmiId', label: 'RMI ID of the new item', value: nextPadded(M.rmis.filter((m) => m.base).map((m) => m.id)), help: 'Only for a new item: it is added as a new row (RMI ID + text) to “' + M.sheetNames.rmi + '”.' },
+    { key: 'rmiId', label: 'RMI ID of the new item', value: nextPadded(M.allRmis.filter((m) => m.base).map((m) => m.id)), help: 'Only for a new item: it is added as a new row (RMI ID + text) to “' + M.sheetNames.rmi + '”.' },
     { key: 'group', label: 'Risk Mitigation Group', type: 'select', options: [{ value: '', label: '— choose —' }].concat(M.groups.map((g) => ({ value: g.id, label: g.id + ' ' + g.name }))), value: '', required: true, help: 'Required: the RMI ID is added to this group’s “RMI ID” cell (unless it is already there).' },
   ], (v) => {
     const m = v.existing ? M.by.rmi.get(v.existing) : null;
@@ -428,7 +436,7 @@ function addRmiDialog(r) {
       if (same) throw new Error('this text already exists as ' + same.id + ' — choose it under “Existing mitigation item”');
       newId = v.rmiId; if (!newId) throw new Error('a new item needs an RMI ID');
       if (/\s|[,;]/.test(newId)) throw new Error('the RMI ID must not contain spaces, commas or semicolons');
-      if (M.rmis.some((x) => x.base && x.id.toLowerCase() === newId.toLowerCase())) throw new Error('RMI ID ' + newId + ' already exists');
+      if (M.allRmis.some((x) => x.base && x.id.toLowerCase() === newId.toLowerCase())) throw new Error('RMI ID ' + newId + ' already exists');
     } else if (r.items.some((o) => o.rmi === m)) throw new Error(r.id + ' already lists ' + m.id);
     const g = M.by.group.get(v.group); if (!g) throw new Error('choose a Risk Mitigation Group');
     const cs = new ChangeSet(); cs.focus = r; addRmi(cs, r, m, text, g, newId); return cs;
@@ -463,7 +471,7 @@ function addGroupDialog() {
     const cs = new ChangeSet(); cs.focus = { type: 'group', id: v.id }; addGroup(cs, v); return cs;
   });
 }
-const canEdit = () => write.on && !!M && !!M.sheetObj && !!M.sheetObj.risk;
+const canEdit = () => edit.enabled && write.on && !!M && !!M.sheetObj && !!M.sheetObj.risk; // DEPRECATED: see the file header
 function editButtons(o) {
   if (!canEdit() || !EDITORS[o.type] || (o.type === 'rmi' && (!o.base || !M.sheetObj.rmi))) return null;
   return [h('button.btn.ghost.sm', { type: 'button', id: 'edit-btn', tip: 'Edit in the workbook', onclick: () => EDITORS[o.type](o) }, icon('pen', 13), 'Edit'),

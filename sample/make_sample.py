@@ -84,6 +84,8 @@ GROUPS = {
         "Terminate external connections in a demilitarised zone"]),
     "RMG09": ("Risk transference / sharing", "Operational procedures", [
         "Maintain an incident response on-call rota"]),
+    "RMG10": ("Risk mitigation / reduction", "Physical protection", [       # only linked to not-relevant risks
+        "Seal gateway housings with tamper evident labels"]),
 }
 
 THREATS = [
@@ -162,9 +164,16 @@ for gid, (_, _, items) in GROUPS.items():
 canon += [FOUR_EYES, TABLETOP, WAF]
 MASTER = [[f"RMI-{n + 1:03d}", t] for n, t in enumerate(canon)]
 MASTER.append([f"RMI-{len(MASTER) + 1:03d}", "Monitor certificate expiry dates"])   # same text as another RMI
+# column "Removed": empty / no = active, yes = removed; anything else is a format error (treated as active)
+REMOVED_LINKED = f"RMI-{len(MASTER) + 1:03d}"
+MASTER.append([REMOVED_LINKED, "Rotate service credentials automatically every 90 days"])   # removed, same text as an active RMI (no warning), still linked (errors)
+MASTER.append([f"RMI-{len(MASTER) + 1:03d}", ""])                                # removed without text (no warning)
+REMOVED = {REMOVED_LINKED: "Yes", MASTER[-1][0]: "yes"}
 ID = {}
 for i, t in MASTER: ID.setdefault(t, i)
 TEXT = {i: t for i, t in MASTER}
+REMOVED[ID[TABLETOP]] = "yes"                                                   # removed and unused: no "not used" warning
+REMOVED[ID["Review access rights every quarter"]] = "maybe"                     # invalid value -> format error, stays active
 
 for r in risks:
     r["ids"] = [ID[t] for t, g in r["items"]]
@@ -193,6 +202,21 @@ r = next(m); r["fa"], r["ea"] = "very frequently", EFFECT_K[3]                  
 r = next(m); r["red_override"] = 99                                             # wrong reduction value
 r = next(m); r["asm_title_override"] = True                                     # assumption cited with a different title
 dup = risks[7]; dup["rid"] = risks[6]["rid"]                                    # duplicate risk ID
+
+# "Threat relevance" is written per risk: despite its name it says whether the RISK is relevant
+for r in risks:
+    r["rel"] = "Directly relevant"
+for r in risks:
+    if r["num"] == 16:                                                          # threat whose risks are all not relevant
+        r["rel"] = "Not relevant: gateways are installed in locked cabinets (see A.1)."
+        r["ids"].append(ID["Seal gateway housings with tamper evident labels"])  # RMG10 and its item: only not-relevant risks
+next(r for r in risks if r["num"] == 43)["rel"] = "not relevant - replay protection is provided by the transport layer"  # mixed threat
+special = [r for r in risks if r["num"] not in (16, 43) and r["rid"] not in ("R.DB.2", "R.API.1", "R.GW.2")]
+special[10]["rel"] = "Indirectly relevant, covered by G 0.23."                  # relevant
+special[14]["rel"] = "Currently NOT RELEVANT: feature disabled in the Alpha release"   # not relevant (any case, any position)
+special[18]["rel"] = None                                                       # empty -> warning, counts as relevant
+special[22]["rel"] = "Not relevent for the Alpha release"                       # typo -> warning, NOT hidden
+special[5]["ids"].append(REMOVED_LINKED)                                        # a risk still listing a removed item
 mis = next(x for x in risks if x["num"] == 32); mis["tid_override"] = "T.BSI.23"  # threat id / name mismatch (first row of the threat)
 
 # group RMI IDs, with a few inconsistencies
@@ -201,6 +225,7 @@ group_ids["RMG08"].append(ID[WAF])                                              
 group_ids["RMG04"].append(ID["Run static code analysis in the build pipeline"])  # item listed by two groups
 group_ids["RMG06"].append("RMI-098")                                            # RMI ID not in the master list
 group_ids["RMG03"][3:5] = [group_ids["RMG03"][3] + "; " + group_ids["RMG03"][4]]  # two RMI IDs on one line
+group_ids["RMG02"].append(REMOVED_LINKED)                                       # a group still listing a removed item
 HAND_TYPED_GROUP = "RMG06"                                                      # Content typed instead of the formula
 
 # ---------------------------------------------------------------- workbook
@@ -247,10 +272,11 @@ for num, name, rel, comps in THREATS:
         ws.cell(row=row, column=2, value=f"T.BSI.{num}"); ws.cell(row=row, column=3, value=f"G 0.{num} {name}"); ws.cell(row=row, column=4, value=rel)
         row += 1
         continue
-    merged = num % 2 == 0   # even threats: merged threat cells; odd threats: value repeated on every row
+    merged = num % 2 == 0   # even threats: merged Threat ID / Threat cells; odd threats: value repeated on every row
     for k, r in enumerate(rs):
         if k == 0 or not merged:
-            ws.cell(row=row, column=2, value=r.get("tid_override", f"T.BSI.{num}")); ws.cell(row=row, column=3, value=r["tname"]); ws.cell(row=row, column=4, value=rel)
+            ws.cell(row=row, column=2, value=r.get("tid_override", f"T.BSI.{num}")); ws.cell(row=row, column=3, value=r["tname"])
+        ws.cell(row=row, column=4, value=r["rel"])                              # one relevance per risk row (never merged)
         asm = r.get("asm_override") or "\n".join(f"{a} {A_TITLE[a]}" for a in r["asm"])
         if r.get("asm_title_override") and r["asm"]:
             asm = f"{r['asm'][0]} Something else entirely"
@@ -271,7 +297,7 @@ for num, name, rel, comps in THREATS:
             ws.cell(row=row, column=20, value=r.get("red_override", idx - ia))
         row += 1
     if merged and len(rs) > 1:
-        for col in (2, 3, 4):
+        for col in (2, 3):
             ws.merge_cells(start_row=first, start_column=col, end_row=row - 1, end_column=col)
 for col, w in zip("BCDEFGHIJKLMNOPQRST", [11, 30, 22, 10, 50, 18, 22, 34, 14, 18, 8, 34, 22, 12, 70, 14, 18, 8, 10]):
     ws.column_dimensions[col].width = w
@@ -298,13 +324,14 @@ ws.column_dimensions["I"].width = 34; ws.column_dimensions["J"].width = 12; ws.c
 
 # master list of individual mitigation items (headers start in A1)
 ws = wb.create_sheet("Risk mitigations individual")
-for i, hname in enumerate(["RMI ID", "Mitigation item", "Groups", "Assigned", " Extended Description", "Comment", "Responsible"]):
+for i, hname in enumerate(["RMI ID", "Mitigation item", "Groups", "Assigned", " Extended Description", "Comment", "Responsible", "Removed"]):
     c = ws.cell(row=1, column=1 + i, value=hname); c.font = bold; c.fill = head_fill
 people = ["Security Officer", "Platform Team", "Operations", "Development Lead"]
 g_ids, g_rmi = f"{GRP_SHEET}!$G$2:$G${G_LAST}", f"{GRP_SHEET}!$J$2:$J${G_LAST}"
 for n, (rid, t) in enumerate(MASTER):
     rr = 2 + n
-    row = [rid, t, None, None, f"Implementation details for: {t.lower()}.", "" if n % 3 else "Reviewed in workshop", people[n % 4]]
+    removed = REMOVED.get(rid, "no" if n % 5 == 0 else "No" if n % 7 == 0 else "")
+    row = [rid, t or None, None, None, f"Implementation details for: {t.lower()}." if t else None, "" if n % 3 else "Reviewed in workshop", people[n % 4], removed]
     for ci, v in enumerate(row):
         ws.cell(row=rr, column=1 + ci, value=v or None).alignment = wrap
     set_array(ws, f"C{rr}", ArrayFormula(None, f'=_xlfn.TEXTJOIN(", ",TRUE,IF(ISNUMBER(FIND(CHAR(10)&A{rr}&CHAR(10),CHAR(10)&{g_rmi}&CHAR(10)))*({g_ids}<>""),{g_ids},""))'))

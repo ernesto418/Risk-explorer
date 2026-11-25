@@ -17,11 +17,13 @@ const state = {
   file: null, handle: null, view: 'overview', drawer: [], expanded: new Set(),
   ui: {
     matrix: { show: 'risks', when: 'before', f: {} },
-    risks: { f: {}, group: 'threat', sort: 'index' },
-    mit: { tab: 'groups', q: '', only: 'all' },
+    /* hideNR: “Hide not relevant” of each view (on at start, independent per view / tab) */
+    risks: { f: {}, group: 'threat', sort: 'index', hideNR: true },
+    threats: { hideNR: true },
+    mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true, hideRemoved: true },
     asm: { q: '' },
     comp: { when: 'before' },
-    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: [], pending: [] },
+    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: [], pending: [], hideNR: true, hideNRFlash: false },
     issues: { cats: new Set(), q: '', by: 'type' },
   },
 };
@@ -137,14 +139,40 @@ function validityBadge(v) {
   return h('span.validity' + (yes ? '.yes' : no ? '.no' : ''), yes ? icon('check', 12) : no ? icon('close', 12) : null, v);
 }
 
+/* ---- “not relevant” (column “Threat relevance” of a risk) ------------------------------------------ */
+function nrTag(r) { return h('span.tag.nr', { tip: 'Not relevant — “Threat relevance”: ' + truncate(r.relevanceRaw, 200) }, 'not relevant'); }
+/** Relevant risks first, not-relevant ones at the end (stable otherwise). */
+const nrLast = (list, key) => list.slice().sort((a, b) => !!(key ? key(a) : a).notRelevant - !!(key ? key(b) : b).notRelevant);
+/**
+ * “Hide not relevant” toggle of one view: ui[key] is the state, `hiddenText` says what it hides right now. When the
+ * filter was switched off automatically (ui[key + 'Flash']), the button is highlighted once.
+ */
+function nrToggle(ui, key, hiddenText, onchange) {
+  const on = !!ui[key], flash = !!ui[key + 'Flash'];
+  ui[key + 'Flash'] = false;
+  return h('button.btn.nr-toggle' + (on ? '.on' : '') + (flash ? '.flash' : ''), {
+    type: 'button', id: 'nr-' + key, 'aria-pressed': String(on),
+    tip: (on ? 'On: ' : 'Off: ') + 'hides objects whose risks are all “not relevant” (column “Threat relevance”: the words “not relevant” anywhere in the text). Click to ' + (on ? 'show them.' : 'hide them.'),
+    onclick: () => { ui[key] = !on; onchange(); },
+  }, h('span.nr-box', on ? icon('check', 11) : null), 'Hide not relevant', on && hiddenText ? h('span.muted.small', '· ' + hiddenText) : null);
+}
+
+/** “Hide removed” of the Mitigations items tab (the only place where removed items can be shown). */
+function removedToggle(ui, n, onchange) {
+  const on = !!ui.hideRemoved;
+  return h('button.btn.nr-toggle' + (on ? '.on' : ''), { type: 'button', id: 'rm-hideRemoved', 'aria-pressed': String(on),
+    tip: (on ? 'On: hides' : 'Off: shows') + ' the mitigation items marked as removed (column “Removed” = yes in “Risk mitigations individual”). Removed items are always hidden everywhere else.',
+    onclick: () => { ui.hideRemoved = !on; onchange(); } }, h('span.nr-box', on ? icon('check', 11) : null), 'Hide removed', on && n ? h('span.muted.small', '· ' + n + ' hidden') : null);
+}
+
 /* ---- rows & cards ------------------------------------------------------------------ */
 function riskRow(r, extra) {
-  return h('button.rrow', { type: 'button', onclick: (e) => { e.stopPropagation(); openObj(r); }, tip: 'Open ' + r.id },
-    h('span.rrow-id', r.id), h('span.rrow-text', r.description || '—'), extra || null, issueBadges(r.issues), pillPair(r));
+  return h('button.rrow' + (r.notRelevant ? '.nr' : ''), { type: 'button', onclick: (e) => { e.stopPropagation(); openObj(r); }, tip: 'Open ' + r.id },
+    h('span.rrow-id', r.id), h('span.rrow-text', r.description || '—'), r.notRelevant ? nrTag(r) : null, extra || null, issueBadges(r.issues), pillPair(r));
 }
 function riskList(risks, limit) {
   if (!risks.length) return h('div.muted.small', 'None');
-  const sorted = risks.slice().sort((a, b) => (b.index || 0) - (a.index || 0) || natCmp(a.id, b.id));
+  const sorted = nrLast(risks.slice().sort((a, b) => (b.index || 0) - (a.index || 0) || natCmp(a.id, b.id)));
   const box = h('div.rrows');
   const draw = (n) => {
     clear(box);
@@ -221,6 +249,18 @@ function miniMatrix(r) {
   }
   return h('div.mini-wrap', g, h('div.mini-leg', h('span', h('i.mk.before'), 'before'), h('span', h('i.mk.after'), 'after')));
 }
+/** Stat boxes of a group: relevant value, total (incl. not relevant) in brackets; hover explains both. */
+function relevanceStats(g) {
+  const rel = g.risks.filter((r) => !r.notRelevant), relItems = g.rmis.filter((m) => !onlyNotRelevant(m)), nrN = g.risks.length - rel.length;
+  const box = (main, total, label, tip) => h('div.stat', { tip }, h('b', main, h('span.stat-tot', '(' + total + ')')), label + ' (total)');
+  const mx = (list, f) => maxOf(list, f), num = (v) => (v == null ? '–' : String(v));
+  const idx = (f, what) => box(pill(mx(rel, f)), num(mx(g.risks, f)), 'highest index ' + what,
+    'Highest risk index ' + what + ' treatment: ' + num(mx(rel, f)) + ' among the relevant risks · ' + num(mx(g.risks, f)) + ' including not relevant');
+  return h('div.stats',
+    box(String(relItems.length), g.rmis.length, 'mitigation items', relItems.length + ' mitigation items not only linked to not-relevant risks · ' + g.rmis.length + ' including those linked only to not-relevant risks'),
+    box(String(rel.length), g.risks.length, 'relevant risks addressed', plural(rel.length, 'relevant risk') + ' · ' + g.risks.length + ' including not relevant' + (nrN ? ' (' + nrN + ' not relevant)' : '')),
+    idx((r) => r.index, 'before'), idx((r) => r.residual, 'after'));
+}
 function itemGroups(o) {
   if (o.groups.length) return o.groups.map((g) => chip(g));
   return h('span.tag.bad', { tip: 'Consistency error: no Risk Mitigation Group lists this RMI ID' }, 'no group');
@@ -234,6 +274,7 @@ const DETAIL = {
       section('Context', h('div.fields',
         field('Threat', r.threat ? chip(r.threat, { label: true }) : null),
         field('Affected component', r.components.map((c) => chip(c))),
+        M.cols.risk && M.cols.risk.relevance != null ? field('Relevance', r.relevanceRaw ? [r.notRelevant ? nrTag(r) : null, h('span.text', r.relevanceRaw)] : null) : null,
         field('Core values at risk', r.coreValues.length ? ciaBadges(r.coreValues, true) : null),
         field('Related assumptions', r.assumptions.length ? h('div.chips.col', r.assumptions.map((a) => chip(a, { label: true }))) : null))),
       section('Treatment', h('div',
@@ -251,7 +292,6 @@ const DETAIL = {
     return h('div.detail',
       ctx.inline ? null : h('p.lead', t.name || h('span.muted', 'No threat name')),
       h('div.fields',
-        field('Threat relevance', t.relevance ? h('span.text', t.relevance) : null),
         field('BSI catalogue', cat ? [h('span', 'G 0.' + cat.n + ' ' + cat.name + ' '), h('span.muted.small', '— core values primarily affected: '), ciaBadges(cat.cia)] : h('span.muted', 'Not an elementary threat of the BSI catalogue')),
         field('Core values in the risks', used.length ? ciaBadges(used) : null),
         field('Components affected', comps.map((c) => chip(c)))),
@@ -262,11 +302,12 @@ const DETAIL = {
     const status = () => null;
     return h('div.detail',
       ctx.inline ? null : h('p.lead', m.text || h('span.muted', rmiText(m))),
+      m.removed ? h('p.note', icon('warning', 12), 'Marked as removed (column “Removed” = yes): hidden everywhere in the tool except here. Risks and groups must no longer list it; any that still do are reported as errors.') : null,
       m.base ? h('div.fields', field('Extended Description', m.extDescription ? h('span.text', m.extDescription) : null), field('Responsible', m.responsible || null), field('Comment', m.comment ? h('span.text', m.comment) : null))
         : h('p.note', icon('warning', 12), 'RMI ID “' + m.id + '” is not in “' + (M.sheetNames.rmi || 'Risk mitigations individual') + '”, so it has no text. Add a row with this ID there, or correct the ID where it is used.'),
       h('div.fields',
-        field('Mitigation group', m.groups.length ? h('div.chips.col', m.groups.map((g) => h('span.chips', chip(g, { label: true }), status(g)))) : h('span.tag.bad', 'no group'))),
-      section('Used in risks', m.occ.length ? h('div.rrows', m.occ.map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + ' of “RMI ID”' + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', 'No risk lists this RMI ID.'), { count: m.risks.length }),
+        m.removed ? null : field('Mitigation group', m.groups.length ? h('div.chips.col', m.groups.map((g) => h('span.chips', chip(g, { label: true }), status(g)))) : h('span.tag.bad', 'no group'))),
+      section('Used in risks', m.occ.length ? h('div.rrows', nrLast(m.occ, (o) => o.risk).map((o) => riskRow(o.risk, h('span.rrow-extra', 'line ' + o.line + ' of “RMI ID”' + (o.groups.length ? '' : ' · not in any group'))))) : h('div.muted.small', m.removed ? 'Not linked: the item is removed. Cells that still list it are reported under Issues.' : 'No risk lists this RMI ID.'), { count: m.risks.length }),
       m.listed.length ? section('Listed by groups', h('div.chips.col', m.listed.map((i) => h('span.chips', chip(i.group, { label: true }), h('span.muted.small', 'line ' + i.line + ' of “RMI ID”')))), { count: m.listed.length }) : null,
       issuesSection(m), m.base ? sourceLine(m) : null);
   },
@@ -274,9 +315,7 @@ const DETAIL = {
     const comps = uniq(g.risks.flatMap((r) => r.components));
     return h('div.detail',
       ctx.inline ? null : h('p.lead', g.name || h('span.muted', 'No group name')),
-      h('div.stats',
-        h('div.stat', h('b', g.rmis.length), 'mitigation items'), h('div.stat', h('b', g.risks.length), 'risks addressed'),
-        h('div.stat', h('b', pill(maxOf(g.risks, (r) => r.index))), 'highest index before'), h('div.stat', h('b', pill(maxOf(g.risks, (r) => r.residual))), 'highest index after')),
+      relevanceStats(g),
       h('div.fields', field('Risk treatment', g.treatment ? h('span.text', g.treatment) : null), field('Components protected', comps.map((c) => chip(c)))),
       section('Mitigation items', h('div',
         g.items.length ? h('ul.items', g.items.map((i) => h('li.item', itemButton(i.rmi),
@@ -336,7 +375,9 @@ function renderDrawer(focus) {
   if (top.obj) {
     const o = top.obj, t = TYPES[o.type];
     head = h('header.dr-head.t-' + o.type, back, h('span.obj-ico', icon(t.icon, 16)), h('div.dr-title', h('span.dr-type', t.label), h('span.dr-id', objLabel(o))),
-      issueBadges(o.issues), h('button.btn.ghost.sm', { type: 'button', tip: 'Show this object and everything linked to it in the Connections view', onclick: () => { state.ui.flow.focus = [[o]]; state.ui.flow.pending = []; if (!state.ui.flow.cols.includes(o.type)) state.ui.flow.cols = FLOW_ORDER.filter((x) => state.ui.flow.cols.includes(x) || x === o.type); closeDrawer(); go('connections', true); } }, icon('flow', 13), 'Connections'), editButtons(o), close);
+      issueBadges(o.issues), h('button.btn.ghost.sm', { type: 'button', tip: 'Show this object and everything linked to it in the Connections view', onclick: () => { state.ui.flow.focus = [[o]]; state.ui.flow.pending = [];
+        if (state.ui.flow.hideNR && onlyNotRelevant(o)) { state.ui.flow.hideNR = false; state.ui.flow.hideNRFlash = true; } /* would be hidden: show it and highlight the toggle */
+        if (!state.ui.flow.cols.includes(o.type)) state.ui.flow.cols = FLOW_ORDER.filter((x) => state.ui.flow.cols.includes(x) || x === o.type); closeDrawer(); go('connections', true); } }, icon('flow', 13), 'Connections'), editButtons(o), close);
     body = detailBody(o, {});
     const hs = historySection(o);
     if (hs) body.append(hs);

@@ -5,7 +5,8 @@
 /* =============================== MITIGATIONS =============================== */
 function rmiCard(m) {
   return objCard(m, {
-    main: [m.groups.length ? m.groups.map((g) => chip(g)) : h('span.tag.bad', { tip: 'Error: not assigned to any Risk Mitigation Group' }, 'no group'),
+    main: [m.removed ? h('span.tag.removed', { tip: 'Marked as removed (column “Removed” = yes). Hidden everywhere else in the tool.' }, 'removed')
+      : m.groups.length ? m.groups.map((g) => chip(g)) : h('span.tag.bad', { tip: 'Error: not assigned to any Risk Mitigation Group' }, 'no group'),
       h('span.meta-n', { tip: 'Risks using this item' }, icon('risk', 12), plural(m.risks.length, 'risk')),
       m.base ? null : h('span.tag.bad', { tip: 'Consistency error: this RMI ID is not in the master list' }, 'unknown ID')],
     side: m.risks.length ? pill(maxOf(m.risks, (r) => r.index), 'Highest initial risk index among the risks using this item') : null,
@@ -21,16 +22,19 @@ function groupCard(g) {
 }
 VIEWS.mitigations = function () {
   const ui = state.ui.mit;
-  const body = h('div'), controls = h('div.controls');
+  const body = h('div'), controls = h('div.controls'), nrSlot = h('div.ctl.nr-slot');
   const unassigned = M.rmis.filter((m) => m.occ.length && !m.groups.length);
+  /* “Hide not relevant”, separately per tab: hides groups / items whose risks are all not relevant (unused ones stay) */
   const draw = () => {
     clear(body);
     if (ui.tab === 'groups') {
+      const groups = ui.hideNRg ? M.groups.filter((g) => !onlyNotRelevant(g)) : M.groups;
+      fill(nrSlot, nrToggle(ui, 'hideNRg', plural(M.groups.length - groups.length, 'group') + ' hidden', draw));
       if (!M.groups.length) { body.append(emptyState('No mitigation groups found', 'The workbook has no “Risk Mitigation Groups” sheet or it is empty.')); }
       else {
-        const rows = M.groups.slice().sort((a, b) => b.risks.length - a.risks.length || natCmp(a.id, b.id)).map((g) => ({ label: [h('b', g.id), ' ', truncate(g.name, 34)], value: g.risks.length, tip: g.id + ' — ' + g.name + '\n' + plural(g.rmis.length, 'item') + ', ' + plural(g.risks.length, 'risk') + ' addressed', onclick: () => openObj(g) }));
+        const rows = groups.slice().sort((a, b) => b.risks.length - a.risks.length || natCmp(a.id, b.id)).map((g) => ({ label: [h('b', g.id), ' ', truncate(g.name, 34)], value: g.risks.length, tip: g.id + ' — ' + g.name + '\n' + plural(g.rmis.length, 'item') + ', ' + plural(g.risks.length, 'risk') + ' addressed', onclick: () => openObj(g) }));
         body.append(cardBox('Reach of each group', 'Number of risks addressed by the mitigation items of each group', barList(rows), 'wide-labels'));
-        body.append(h('h2.list-title', 'Mitigation groups ', h('span.count', M.groups.length)), h('div.list', M.groups.map(groupCard)));
+        body.append(h('h2.list-title', 'Mitigation groups ', h('span.count', groups.length)), h('div.list', groups.map(groupCard)));
       }
       if (unassigned.length) {
         add(body, h('h2.list-title', 'Used by risks but not in any group ', h('span.count', unassigned.length), h('span.ibadge.cat-consistency', { tip: 'Consistency error: every mitigation item used by a risk must be listed by a group' }, icon('consistency', 12))),
@@ -38,12 +42,17 @@ VIEWS.mitigations = function () {
       }
     } else {
       const q = ui.q.toLowerCase();
-      let items = M.rmis.filter((m) => !q || (m.id + ' ' + m.text + ' ' + m.groups.map((g) => g.id + ' ' + g.name).join(' ')).toLowerCase().includes(q));
+      /* the only place that can show removed items (“Hide removed”, on by default) */
+      const pool = ui.hideRemoved ? M.rmis : M.allRmis, rmN = M.allRmis.length - M.rmis.length;
+      let items = pool.filter((m) => !q || (m.id + ' ' + m.text + ' ' + m.groups.map((g) => g.id + ' ' + g.name).join(' ')).toLowerCase().includes(q));
       if (ui.only === 'unassigned') items = items.filter((m) => !m.groups.length);
       else if (ui.only === 'issues') items = items.filter((m) => m.issues.some((i) => i.cat !== 'warning'));
       else if (ui.only === 'orphan') items = items.filter((m) => !m.occ.length);
       else if (ui.only === 'shared') items = items.filter((m) => m.risks.length > 1);
-      body.append(h('div.list-info', items.length + ' of ' + M.rmis.length + ' mitigation items'));
+      const nrN = ui.hideNRi ? items.filter(onlyNotRelevant).length : 0;
+      if (ui.hideNRi) items = items.filter((m) => !onlyNotRelevant(m));
+      fill(nrSlot, removedToggle(ui, rmN, draw), nrToggle(ui, 'hideNRi', plural(nrN, 'item') + ' hidden', draw));
+      body.append(h('div.list-info', items.length + ' of ' + pool.length + ' mitigation items' + (nrN ? ' (' + nrN + ' linked only to not-relevant risks hidden)' : '') + (ui.hideRemoved && rmN ? ' · ' + plural(rmN, 'removed item') + ' hidden' : '')));
       const list = h('div.list');
       const show = (n) => { clear(list); items.slice(0, n).forEach((m) => list.append(rmiCard(m))); if (items.length > n) list.append(h('button.more', { type: 'button', onclick: () => show(n + 300) }, 'Show more (' + (items.length - n) + ' remaining)')); if (!items.length) list.append(emptyState('No mitigation items match')); };
       show(150);
@@ -54,6 +63,7 @@ VIEWS.mitigations = function () {
     fill(controls, segmented([{ value: 'groups', label: 'Groups', icon: 'group' }, { value: 'items', label: 'All items', icon: 'rmi' }], ui.tab, (v) => { ui.tab = v; drawControls(); draw(); }, 'View'));
     if (ui.tab === 'items') controls.append(searchBox('Search mitigation items…', ui.q, (v) => { ui.q = v; draw(); }),
       segmented([{ value: 'all', label: 'All' }, { value: 'unassigned', label: 'Without group' }, { value: 'shared', label: 'Used by several risks' }, { value: 'issues', label: 'With errors' }, { value: 'orphan', label: 'Not linked to any risk' }], ui.only, (v) => { ui.only = v; drawControls(); draw(); }, 'Filter'));
+    controls.append(nrSlot); // always last: aligned to the right
   };
   drawControls(); draw();
   return h('div.view', viewHead('Mitigations', 'Mitigation items (RMI) and their texts come from “Risk mitigations individual”. Risks and Risk Mitigation Groups (RMG) refer to them by RMI ID in their “RMI ID” column (one ID per line).'), controls, body);
@@ -154,7 +164,15 @@ VIEWS.connections = function () {
     const T = ui.focus, F = T.flat(), f = F.length > 0, single = F.length === 1;
     const byType = (t) => F.filter((o) => o.type === t);
     const cols = FLOW_ORDER.filter((t) => ui.cols.includes(t));
-    let riskSet = M.risks, rmiSet = null, groupSet = null;
+    /* “Hide not relevant”: not-relevant risks leave the view, and threats whose risks are all not relevant;
+       every other column keeps its objects (only links through hidden risks disappear). */
+    const baseRisks = ui.hideNR ? M.risks.filter((r) => !r.notRelevant) : M.risks;
+    if (f && ui.hideNR && F.some(onlyNotRelevant)) {
+      host.append(emptyState('The focus contains objects hidden by “Hide not relevant”', 'Their risks are all not relevant (column “Threat relevance”). Switch the filter off to show them.'),
+        h('p', h('button.btn', { type: 'button', id: 'nr-show', onclick: () => { ui.hideNR = false; ui.hideNRFlash = true; drawControls(); draw(); } }, 'Show not relevant')));
+      return;
+    }
+    let riskSet = baseRisks, rmiSet = null, groupSet = null;
     if (f) {
       for (const term of T) { const rs = new Set(term.flatMap((o) => (o.type === 'risk' ? [o] : o.risks))); riskSet = riskSet.filter((r) => rs.has(r)); }
       for (const term of T.filter((x) => x[0].type === 'group')) { const ok = new Set(term.flatMap((g) => g.rmis)); rmiSet = new Set([...(rmiSet || ok)].filter((m) => ok.has(m))); }
@@ -173,7 +191,7 @@ VIEWS.connections = function () {
     /* nodes per column */
     const nodes = {};
     for (const t of cols) {
-      if (!f) nodes[t] = { component: M.components, assumption: M.assumptions, threat: M.threats.filter((x) => x.risks.length), risk: M.risks, rmi: M.rmis, group: M.groups }[t].slice();
+      if (!f) nodes[t] = { component: M.components, assumption: M.assumptions, threat: M.threats.filter((x) => x.risks.length && (!ui.hideNR || !onlyNotRelevant(x))), risk: baseRisks, rmi: M.rmis, group: M.groups }[t].slice();
       else if (t === 'rmi' && rmiSet && single) nodes[t] = [...rmiSet];
       else if (t === 'group' && groupSet && single) nodes[t] = [...groupSet];
       else nodes[t] = uniq(riskSet.flatMap(rel[t]));
@@ -319,10 +337,12 @@ VIEWS.connections = function () {
       'Line thickness = number of risks behind a link. Items are linked to groups by the RMI IDs listed in the group’s “RMI ID” cell.'));
   };
   const drawControls = () => {
+    const nrR = M.risks.filter((r) => r.notRelevant).length, nrT = M.threats.filter((t) => t.risks.length && onlyNotRelevant(t)).length;
     fill(controls, h('div.ctl', h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
       type: 'button', 'aria-pressed': String(ui.cols.includes(t)),
       onclick: () => { if (ui.cols.includes(t)) { if (ui.cols.length > 2) ui.cols = ui.cols.filter((x) => x !== t); } else ui.cols = ui.cols.concat(t); drawControls(); draw(); },
-    }, icon(TYPES[t].icon, 13), TYPES[t].plural)))));
+    }, icon(TYPES[t].icon, 13), TYPES[t].plural)))),
+      h('div.ctl.nr-slot', nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); })));
     const removeObj = (o) => { ui.focus = ui.focus.map((term) => term.filter((x) => x !== o)).filter((term) => term.length); drawControls(); draw(); };
     if (ui.focus.length) controls.append(h('div.ctl.focusbar', h('span.ctl-l', 'Focused on'),
       ui.focus.map((term, ti) => [ti ? h('span.focus-op', { tip: 'Every shown path satisfies both sides' }, 'and') : null,

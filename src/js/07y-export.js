@@ -67,14 +67,15 @@ const issueCount = (o, c) => o.issues.filter((i) => i.cat === c).length || '';
 const issueText = (o) => o.issues.map((i) => '[' + ISSUE_CATS[i.cat].label + '] ' + i.msg).join('\n');
 const ISSUE_COLS = [['Format errors', 9], ['Consistency errors', 11], ['Warnings', 9], ['Findings', 70]];
 const issueCells = (o) => [issueCount(o, 'format'), issueCount(o, 'consistency'), issueCount(o, 'warning'), issueText(o)];
-const filterText = (f) => Object.keys(f || {}).filter((k) => f[k]).map((k) => k + ' = ' + f[k]).join(', ') || 'none';
+const filterText = (f, hideNR) => [Object.keys(f || {}).filter((k) => f[k]).map((k) => k + ' = ' + f[k]).join(', '), hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none';
+const nrText = (r) => (r.notRelevant ? { v: 'not relevant', s: 4 } : 'relevant');
 
 const EXPORTS = {
   risks: { label: 'Risks', run() {
-    const rs = applyRiskFilter(M.risks, state.ui.risks.f);
-    return { filter: filterText(state.ui.risks.f), sheets: [
-      { name: 'Risks', cols: [['Risk ID', 12], ['Threat ID', 11], ['Threat', 30], ['Risk description', 50], ['Affected component', 18], ['Core values', 14], ['Related assumptions', 14], ['Frequency', 14], ['Effects', 16], ['Risk index', 9], ['Level', 10], ['Treatment category', 20], ['Mitigation items', 60], ['Mitigation groups', 14], ['Frequency after', 14], ['Effects after', 16], ['Risk index after', 9], ['Level after', 10], ['Risk reduction', 9]].concat(ISSUE_COLS),
-        rows: rs.map((r) => [r.id, r.threat ? r.threat.id : '', r.threat ? r.threat.name : '', r.description, r.components.map((c) => c.name).join('\n'), r.coreValues.map((k) => CFG.coreValues.find((x) => x.key === k).label).join(', '), ids(r.assumptions), r.freqRaw, r.effectRaw, num0(r.index), lvl(r.index), r.categoryRaw,
+    const rs = applyRiskFilter(M.risks, state.ui.risks.f).filter((r) => !state.ui.risks.hideNR || !r.notRelevant);
+    return { filter: filterText(state.ui.risks.f, state.ui.risks.hideNR), sheets: [
+      { name: 'Risks', cols: [['Risk ID', 12], ['Threat ID', 11], ['Threat', 30], ['Relevant', 10], ['Threat relevance', 30], ['Risk description', 50], ['Affected component', 18], ['Core values', 14], ['Related assumptions', 14], ['Frequency', 14], ['Effects', 16], ['Risk index', 9], ['Level', 10], ['Treatment category', 20], ['Mitigation items', 60], ['Mitigation groups', 14], ['Frequency after', 14], ['Effects after', 16], ['Risk index after', 9], ['Level after', 10], ['Risk reduction', 9]].concat(ISSUE_COLS),
+        rows: rs.map((r) => [r.id, r.threat ? r.threat.id : '', r.threat ? r.threat.name : '', nrText(r), r.relevanceRaw || '', r.description, r.components.map((c) => c.name).join('\n'), r.coreValues.map((k) => CFG.coreValues.find((x) => x.key === k).label).join(', '), ids(r.assumptions), r.freqRaw, r.effectRaw, num0(r.index), lvl(r.index), r.categoryRaw,
           r.items.map((o) => o.rmi.id + '  ' + rmiText(o.rmi) + (o.groups.length ? '  → ' + o.groups.map((g) => g.id).join(', ') : '  → no group')).join('\n'), ids(r.groups), r.freqAfterRaw, r.effectAfterRaw, num0(r.residual), lvl(r.residual), r.index != null && r.residual != null ? r.index - r.residual : ''].concat(issueCells(r))) },
       { name: 'Risk-item links', cols: [['Risk ID', 12], ['Line in RMI ID cell', 8], ['RMI ID', 10], ['Mitigation item', 70], ['Mitigation group(s)', 16]],
         rows: rs.flatMap((r) => r.items.map((o) => [r.id, o.line, o.rmi.id, rmiText(o.rmi), o.groups.length ? ids(o.groups) : { v: 'none — not listed by any group', s: 5 }])) }] };
@@ -87,15 +88,15 @@ const EXPORTS = {
       { name: 'Positions', cols: [['Risk ID', 12], ['Threat ID', 11], ['Component', 18], ['Frequency before', 14], ['Effects before', 16], ['Index before', 9], ['Level before', 10], ['Frequency after', 14], ['Effects after', 16], ['Index after', 9], ['Level after', 10], ['Moved', 8]],
         rows: rs.map((r) => { const a = posOf(r, 'before'), b = posOf(r, 'after'); return [r.id, r.threat ? r.threat.id : '', r.componentRaw, a.f ? a.f.label : '', a.e ? a.e.label : '', num0(r.index), lvl(r.index), b.f ? b.f.label : '', b.e ? b.e.label : '', num0(r.residual), lvl(r.residual), a.f === b.f && a.e === b.e ? 'no' : 'yes']; }) }] };
   } },
-  threats: { label: 'Threats', run: () => ({ sheets: [{ name: 'Threats', cols: [['Threat ID', 11], ['Elementary threat', 10], ['Threat', 40], ['Threat relevance', 40], ['BSI core values', 10], ['Risks', 7], ['Risk IDs', 14], ['Components', 20], ['Highest index before', 10], ['Highest index after', 10]].concat(ISSUE_COLS),
-    rows: M.threats.map((t) => { const c = BSI_THREATS.find((x) => x.n === t.num); return [t.id, t.num != null ? 'G 0.' + t.num : '', t.name, t.relevance, c ? c.cia.join(', ') : '', t.risks.length, ids(t.risks), uniq(t.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(t.risks, (r) => r.index)), num0(maxOf(t.risks, (r) => r.residual))].concat(issueCells(t)); }) }] }) },
-  mitigations: { label: 'Mitigations', run: () => ({ sheets: [
+  threats: { label: 'Threats', run: () => ({ filter: filterText(null, state.ui.threats.hideNR), sheets: [{ name: 'Threats', cols: [['Threat ID', 11], ['Elementary threat', 10], ['Threat', 40], ['Only not-relevant risks', 10], ['BSI core values', 10], ['Risks', 7], ['Risk IDs', 14], ['Components', 20], ['Highest index before', 10], ['Highest index after', 10]].concat(ISSUE_COLS),
+    rows: M.threats.filter((t) => !state.ui.threats.hideNR || !onlyNotRelevant(t)).map((t) => { const c = BSI_THREATS.find((x) => x.n === t.num); return [t.id, t.num != null ? 'G 0.' + t.num : '', t.name, onlyNotRelevant(t) ? 'yes' : '', c ? c.cia.join(', ') : '', t.risks.length, ids(t.risks), uniq(t.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(t.risks, (r) => r.index)), num0(maxOf(t.risks, (r) => r.residual))].concat(issueCells(t)); }) }] }) },
+  mitigations: { label: 'Mitigations', run: () => ({ filter: 'hide not relevant = ' + (state.ui.mit.hideNRg ? 'on' : 'off') + ' (groups), ' + (state.ui.mit.hideNRi ? 'on' : 'off') + ' (items); hide removed = ' + (state.ui.mit.hideRemoved ? 'on' : 'off'), sheets: [
     { name: 'Mitigation groups', cols: [['Group ID', 10], ['Security measure group', 30], ['Risk treatment', 22], ['Items', 7], ['Mitigation items', 70], ['Risks', 7], ['Risk IDs', 14], ['Components', 20], ['Highest index before', 10], ['Highest index after', 10]].concat(ISSUE_COLS),
-      rows: M.groups.map((g) => [g.id, g.name, g.treatment, g.rmis.length, g.rmis.map((m) => m.id + '  ' + rmiText(m)).join('\n'), g.risks.length, ids(g.risks), uniq(g.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(g.risks, (r) => r.index)), num0(maxOf(g.risks, (r) => r.residual))].concat(issueCells(g))) },
-    { name: 'Mitigation items', cols: [['RMI ID', 10], ['Mitigation item', 70], ['In master list', 9], ['Groups', 12], ['In a group', 9], ['Extended Description', 40], ['Comment', 30], ['Responsible', 16], ['Risks', 7], ['Risk IDs', 14]].concat(ISSUE_COLS),
-      rows: M.rmis.map((m) => [m.id, rmiText(m), m.base ? 'yes' : { v: 'NO', s: 5 }, ids(m.groups), m.groups.length ? 'yes' : { v: 'NO', s: 5 }, m.extDescription || '', m.comment || '', m.responsible || '', m.risks.length, ids(m.risks)].concat(issueCells(m))) },
+      rows: M.groups.filter((g) => !state.ui.mit.hideNRg || !onlyNotRelevant(g)).map((g) => [g.id, g.name, g.treatment, g.rmis.length, g.rmis.map((m) => m.id + '  ' + rmiText(m)).join('\n'), g.risks.length, ids(g.risks), uniq(g.risks.flatMap((r) => r.components)).map((x) => x.name).join('\n'), num0(maxOf(g.risks, (r) => r.index)), num0(maxOf(g.risks, (r) => r.residual))].concat(issueCells(g))) },
+    { name: 'Mitigation items', cols: [['RMI ID', 10], ['Mitigation item', 70], ['Removed', 9], ['In master list', 9], ['Groups', 12], ['In a group', 9], ['Extended Description', 40], ['Comment', 30], ['Responsible', 16], ['Risks', 7], ['Risk IDs', 14]].concat(ISSUE_COLS),
+      rows: (state.ui.mit.hideRemoved ? M.rmis : M.allRmis).filter((m) => !state.ui.mit.hideNRi || !onlyNotRelevant(m)).map((m) => [m.id, rmiText(m), m.removed ? { v: 'yes', s: 4 } : '', m.base ? 'yes' : { v: 'NO', s: 5 }, ids(m.groups), m.groups.length ? 'yes' : { v: 'NO', s: 5 }, m.extDescription || '', m.comment || '', m.responsible || '', m.risks.length, ids(m.risks)].concat(issueCells(m))) },
     { name: 'Item-group links', cols: [['RMI ID', 10], ['Group ID', 10], ['Mitigation item', 70]],
-      rows: M.groups.flatMap((g) => g.rmis.map((m) => [m.id, g.id, rmiText(m)])) }] }) },
+      rows: M.groups.flatMap((g) => g.rmis.filter((m) => !state.ui.mit.hideNRi || !onlyNotRelevant(m)).map((m) => [m.id, g.id, rmiText(m)])) }] }) },
   assumptions: { label: 'Assumptions', run() {
     const q = state.ui.asm.q.toLowerCase();
     const as = M.assumptions.filter((a) => !q || (a.id + ' ' + a.title + ' ' + a.description + ' ' + a.componentsRaw + ' ' + a.comment).toLowerCase().includes(q));
@@ -107,7 +108,7 @@ const EXPORTS = {
       return [c.name, c.risks.length, ids(c.risks), ids(uniq(c.risks.map((r) => r.threat).filter(Boolean))), ids(c.assumptions), ids(uniq(c.risks.flatMap((r) => r.groups))), b.low, b.medium, b.high, a.low, a.medium, a.high, num0(maxOf(c.risks, (r) => r.index)), num0(maxOf(c.risks, (r) => r.residual))].concat(CFG.coreValues.map((v) => c.risks.filter((r) => r.coreValues.includes(v.key)).length), issueCells(c)); }) }] }) },
   connections: { label: 'Connections', run() {
     const L = flowLast || { riskSet: M.risks, nodes: {}, cols: [] }, focus = state.ui.flow.focus.map((t) => t.map((o) => objLabel(o)).join(' OR ')).join(' AND ');
-    return { filter: focus ? 'focus = ' + focus : 'none', sheets: [
+    return { filter: [focus ? 'focus = ' + focus : '', state.ui.flow.hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none', sheets: [
       { name: 'Paths', cols: [['Risk ID', 12], ['Threat', 12], ['Components', 18], ['Assumptions', 12], ['Mitigation items', 14], ['Mitigation groups', 12], ['Risk index after', 9]],
         rows: L.riskSet.map((r) => [r.id, r.threat ? r.threat.id : '', r.components.map((c) => c.name).join('\n'), ids(r.assumptions), ids(uniq(r.items.map((o) => o.rmi))), ids(r.groups), num0(r.residual)]) },
       { name: 'Objects shown', cols: [['Type', 16], ['ID', 14], ['Title', 70]], rows: L.cols.flatMap((t) => (L.nodes[t] || []).map((o) => [TYPES[t].label, objLabel(o), objTitle(o) || ''])) }] };
@@ -118,8 +119,8 @@ const EXPORTS = {
       const fs = Object.keys(c.fields || {});
       if (!fs.length && !c.linesAdded && !c.linesRemoved) rows.push(base.concat(['', '', '']));
       for (const k of fs) rows.push(base.concat([k, valText(c.fields[k].from), valText(c.fields[k].to)]));
-      for (const l of c.linesAdded || []) rows.push(base.concat(['mitigation line', '', l]));
-      for (const l of c.linesRemoved || []) rows.push(base.concat(['mitigation line', l, '']));
+      for (const l of c.linesAdded || []) rows.push(base.concat(['linked RMI ID', '', l]));
+      for (const l of c.linesRemoved || []) rows.push(base.concat(['linked RMI ID', l, '']));
     };
     if (hist.tab === 'compare' && hist.cmp) hist.cmp.d.changes.forEach((c) => push(hist.cmp.from + ' → ' + hist.cmp.to, '', c));
     else hist.logs.forEach((log) => log.changes.forEach((c) => push(log.createdAt, log.author || '', c)));
