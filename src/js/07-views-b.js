@@ -152,20 +152,27 @@ window.addEventListener('blur', () => { if (flowApply && state.view === 'connect
 const FLOW_ORDER = ['component', 'assumption', 'threat', 'risk', 'rmi', 'group'];
 VIEWS.connections = function () {
   const ui = state.ui.flow;
-  const controls = h('div.controls'), host = h('div.flow-host');
+  const controls = h('div.controls'), tools = h('div.flow-tools'), colsHost = h('div.ctl.flow-cols'), host = h('div.flow-host');
+  if (ui.draft == null) ui.qOpen = false; // the search editor opens only on request (or keeps unapplied text)
   flowUndo = (lc) => { if (lc.prev !== ui.focus) { ui.focus = lc.prev; ui.draft = null; drawControls(); draw(); } openObj(lc.o); };
   let cleanup = null;
   const baseRisks = () => (ui.hideNR ? M.risks.filter((r) => !r.notRelevant) : M.risks);
   /* Every change of the search goes through here: clicks in the columns, the focus bar, the search field, the library.
-     cols: switch on the columns of the object types the search asks for; refocus: keep typing in the search field. */
+     cols: switch on the columns of the object types the search asks for; refocus: give the keyboard focus back to the search box. */
   const setFocus = (expr, opts) => {
     opts = opts || {};
     ui.focus = expr || null; ui.draft = null;
     if (opts.cols) { const need = exprTypes(ui.focus); if (need.some((t) => !ui.cols.includes(t))) ui.cols = FLOW_ORDER.filter((t) => ui.cols.includes(t) || need.includes(t)); }
     drawControls(); draw();
-    if (opts.refocus) { const q = document.getElementById('flow-q'); if (q) { if (q.value) q.value += ' '; q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+    if (opts.refocus) { const q = document.getElementById(ui.qOpen ? 'flow-q' : 'flow-q-mini'); if (q) q.focus(); }
   };
-  const api = { setFocus, redraw: () => { drawControls(); draw(); }, controls: () => drawControls(), baseRisks };
+  /* the compact search box in the header opens the large editor below the “Focused on” bar, caret at the end */
+  const openSearch = () => {
+    ui.qOpen = true; drawControls();
+    const q = document.getElementById('flow-q');
+    if (q) { if (q.value && !/\s$/.test(q.value)) q.value += ' '; q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  };
+  const api = { setFocus, redraw: () => { drawControls(); draw(); }, controls: () => drawControls(), baseRisks, openSearch };
 
   const draw = () => {
     if (cleanup) { cleanup(); cleanup = null; }
@@ -334,23 +341,29 @@ VIEWS.connections = function () {
     requestAnimationFrame(paint);
     cleanup = () => { if (ro) ro.disconnect(); };
     if (res.hidden.length) host.prepend(h('p.note.warn', icon('warning', 12), res.hidden.join(', ') + ' — hidden by “Hide not relevant”: their risks are all not relevant.', showNR()));
-    host.prepend(h('p.note', icon('info', 12), f ? 'Showing ' + total + ' objects on the paths that satisfy the search' + (riskSet.length ? ' (' + plural(riskSet.length, 'risk') + ')' : '') + '. Click another object to narrow further (AND); click an “and” / “or” in the focus bar to switch it. ' : total + ' objects. Click any object to isolate its connections, or Ctrl+click several and release Ctrl; hover to highlight only the objects linked to it through its own risks. Type a logical search above, or build content filters. ',
+    host.prepend(h('p.note', icon('info', 12), f ? 'Showing ' + total + ' objects on the paths that satisfy the search' + (riskSet.length ? ' (' + plural(riskSet.length, 'risk') + ')' : '') + '. Click another object to narrow further (AND); click an “and” / “or” in the focus bar to switch it. ' : total + ' objects. Click any object to isolate its connections, or Ctrl+click several and release Ctrl; hover to highlight only the objects linked to it through its own risks. Write a logical search in the box at the top right, or build content filters. ',
       'Line thickness = number of risks behind a link. Items are linked to groups by the RMI IDs listed in the group’s “RMI ID” cell.'));
   };
   const drawControls = () => {
     const nrR = M.risks.filter((r) => r.notRelevant).length, nrT = M.threats.filter((t) => t.risks.length && onlyNotRelevant(t)).length;
-    fill(controls, h('div.ctl', h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
+    /* header, right: “Hide not relevant”, the filter buttons and the compact search box (Export to Excel above them) */
+    fill(tools, h('div.ctl.nr-slot', nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); })),
+      flowToolButtons(ui, api), flowSearchMini(ui, api));
+    /* header, left (below the description): the columns */
+    fill(colsHost, h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
       type: 'button', 'aria-pressed': String(ui.cols.includes(t)),
       onclick: () => { if (ui.cols.includes(t)) { if (ui.cols.length > 2) ui.cols = ui.cols.filter((x) => x !== t); } else ui.cols = ui.cols.concat(t); drawControls(); draw(); },
-    }, icon(TYPES[t].icon, 13), TYPES[t].plural)))),
-      h('div.ctl.nr-slot', nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); })));
-    controls.append(flowSearchRow(ui, api));
+    }, icon(TYPES[t].icon, 13), TYPES[t].plural))));
+    clear(controls);
     if (ui.focus) controls.append(flowFocusBar(ui, api));
+    if (ui.qOpen) controls.append(flowSearchRow(ui, api)); // the large editor, below the “Focused on” bar
     if (ui.pending.length) controls.append(h('div.ctl.pendingbar', { id: 'flow-pending' }, h('span.ctl-l', 'Selecting'), ui.pending.map((o) => chip(o)), h('span.muted.small', 'release Ctrl to apply')));
     if (ui.libOpen) controls.append(flowLibrary(ui, api));
   };
   drawControls(); draw();
-  return h('div.view', viewHead('Connections', 'How components, assumptions, threats, risks, mitigation items and groups hang together. Choose the columns; links between non-adjacent object types are derived through the risks. Search by clicks, by a logical expression or with content filters.'), controls, host);
+  const head = viewHead('Connections', 'How components, assumptions, threats, risks, mitigation items and groups hang together. Choose the columns; links between non-adjacent object types are derived through the risks. Search by clicks, by a logical expression or with content filters.', tools);
+  head.classList.add('flow-head'); head.firstChild.append(colsHost);
+  return h('div.view', head, controls, host);
 };
 
 /* =============================== ISSUES =============================== */

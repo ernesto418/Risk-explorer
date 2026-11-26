@@ -356,7 +356,6 @@ code.excerpt { display: block; font: 12px/1.45 var(--mono); background: var(--su
 .qbox.err .searchbox { border-color: var(--i-consistency); box-shadow: 0 0 0 3px color-mix(in srgb, var(--i-consistency) 16%, transparent); }
 .qbox:not(.active):not(.err) .qstatus { display: none; }
 .qrow > .btn.sm, .qrow > .icon-btn { margin-top: 4px; } .qrow > .icon-btn { width: 28px; height: 28px; }
-.qsep { width: 1px; align-self: stretch; max-height: 34px; background: var(--border); margin: 0 2px; }
 .btn.sm.primary:disabled, .btn:disabled { opacity: .45; cursor: default; }
 .btn.primary.pulse { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
 .lib-btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
@@ -376,6 +375,18 @@ code.qx mark { background: color-mix(in srgb, var(--i-consistency) 28%, transpar
 .qops { display: inline-flex; gap: 3px; margin-left: auto; }
 .qops button { font: 650 11px/1 var(--mono); padding: 4px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); }
 .qops button:hover { border-color: var(--accent); color: var(--text); }
+.view-head.flow-head { align-items: flex-start; flex-wrap: wrap; }
+.flow-head .view-head-r { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.flow-head #export-btn { order: -1; } /* Export to Excel on top, the search tools below it */
+.flow-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; width: min(440px, 100%); }
+.flow-cols { margin-top: 14px; flex-wrap: wrap; } .controls:empty { display: none; }
+.flow-tools-b { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.qmini { display: flex; align-items: center; gap: 7px; width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); text-align: left; min-width: 0; }
+.qmini:hover { border-color: var(--border-2); } .qmini.on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.qmini .ico { color: var(--accent); flex: none; }
+.qmini-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12.5px/1.2 var(--mono); color: var(--text); }
+.qmini-t.ph { font-family: var(--font); color: var(--muted); } .qmini-k { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
+@media (max-width: 1100px) { .flow-head .view-head-r { width: 100%; } .flow-tools { width: 100%; } }
 /* focus bar: clickable operators, NOT, brackets */
 .focusbar { gap: 6px 8px; } .focus-expr { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; flex: 1; min-width: 0; }
 .focus-tools { display: inline-flex; gap: 2px; margin-left: auto; }

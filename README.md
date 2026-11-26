@@ -66,10 +66,13 @@ consistency errors, warnings, each with sheet, cell and line). Every module can 
 - **By clicks.** Click an object to add it to the search (AND); Ctrl+click several and release Ctrl to add them
   together (same type = OR). In the **Focused on** bar every “and” / “or” can be clicked to switch it (AND binds before
   OR, brackets show the grouping), ¬ negates an object (click the red “not” to undo) and × removes it.
-- **Logical search.** Type your own expression, e.g. `(T.BSI.15 OR T.BSI.43) AND NOT RMI-008` or
-  `"Edge Gateway" AND NOT @no-owner`: IDs or component names, `AND` `OR` `NOT` `( )`, `@name` for library entries.
-  Suggestions complete IDs and names while typing (↑ ↓, Enter or Tab); the line below says how the search reads and how
-  many risks match, or what is wrong and where. Enter applies it. The ⓘ button explains the syntax with examples from
+- **Logical search.** The compact box at the top right (under *Content filter* and *Filters & saved searches*) always
+  shows the current search as text — also when it was built by clicks — and ends in “…” when it does not fit. Click it
+  and a large editor opens below the *Focused on* bar: type your own expression, e.g.
+  `(T.BSI.15 OR T.BSI.43) AND NOT RMI-008` or `"Edge Gateway" AND NOT @no-owner` — IDs or component names, `AND` `OR`
+  `NOT` `( )`, `@name` for library entries. Suggestions complete IDs and names while typing (↑ ↓, Enter or Tab); the
+  line below says how the search reads and how many risks match, or what is wrong and where. Enter applies it and
+  closes the editor; Esc closes it without applying. The ⓘ button explains the syntax with examples from
   the opened workbook.
 - **Content filters.** *Content filter* opens a builder that works by clicks: choose the object type, click the
   attribute in its generic card (every attribute, plus **Errors** and **Warnings**), choose contains / does not contain /

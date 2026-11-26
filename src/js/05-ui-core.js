@@ -23,8 +23,8 @@ const state = {
     mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true, hideRemoved: true },
     asm: { q: '' },
     comp: { when: 'before' },
-    /* focus: the search, an expression tree (05q-query.js) or null; draft: unapplied text of the search field; libOpen: library panel */
-    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: null, draft: null, pending: [], hideNR: true, hideNRFlash: false, libOpen: false },
+    /* focus: the search, an expression tree (05q-query.js) or null; draft: unapplied text of the search editor; qOpen: editor open; libOpen: library panel */
+    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: null, draft: null, qOpen: false, pending: [], hideNR: true, hideNRFlash: false, libOpen: false },
     issues: { cats: new Set(), q: '', by: 'type' },
   },
 };

@@ -1,10 +1,11 @@
 /* ---------------------------------------------------------------------------
- * 07c-search.js — search UI of the Connections view: the logical search field
- * (with ID autocompletion), the “Focused on” bar (clickable AND / OR / NOT),
+ * 07c-search.js — search UI of the Connections view: the compact logical search
+ * box in the view header and its large editor below the “Focused on” bar (with
+ * ID autocompletion), the “Focused on” bar (clickable AND / OR / NOT),
  * the library of content filters and saved searches, the click-by-click content
  * filter builder (object → generic card → attribute → condition) and the
  * download / load of the library as a JSON file. Logic: 05q-query.js.
- * `api` (from VIEWS.connections): setFocus(expr, {cols, refocus}), redraw(), controls(), baseRisks().
+ * `api` (from VIEWS.connections): setFocus(expr, {cols, refocus}), redraw(), controls(), baseRisks(), openSearch().
  * ------------------------------------------------------------------------- */
 
 ICONS.filter = ['M2.2 3h11.6L9.4 8.4v4.4l-2.8-1.4v-3z'];
@@ -19,7 +20,23 @@ ICONS.logic = ['M5.4 3.6 2 8l3.4 4.4', 'M10.6 3.6 14 8l-3.4 4.4', 'M9 3.4 7 12.6
 
 const Q_KW_TIP = { AND: 'both sides must hold', OR: 'either side', NOT: 'the opposite of what follows' };
 
-/* ---- the logical search field ---------------------------------------------------------------------------- */
+/* ---- header tools: “Content filter”, “Filters & saved searches” and the compact logical search box ---------------- */
+function flowToolButtons(ui, api) {
+  return h('div.flow-tools-b',
+    h('button.btn.sm', { type: 'button', id: 'flow-new-filter', tip: 'New content filter: find objects by what an attribute contains or does not contain (errors and warnings included) — by clicks', onclick: () => filterDialog(null, api) }, icon('plus', 13), 'Content filter'),
+    h('button.btn.sm.lib-btn' + (ui.libOpen ? '.on' : ''), { type: 'button', id: 'flow-lib-btn', 'aria-expanded': String(!!ui.libOpen), tip: 'Content filters and saved searches: combine them with AND, OR and NOT',
+      onclick: () => { ui.libOpen = !ui.libOpen; api.controls(); } }, icon('filter', 13), 'Filters & saved searches', h('span.count', searchLib.items.length)));
+}
+/** The search as one line of text (also when it was built by clicks); “…” when it does not fit. A click opens the editor. */
+function flowSearchMini(ui, api) {
+  const text = exprToText(ui.focus);
+  return h('button.qmini' + (ui.qOpen ? '.on' : ''), { type: 'button', id: 'flow-q-mini', 'aria-expanded': String(!!ui.qOpen), 'aria-controls': 'flow-q',
+    tip: ui.qOpen ? null : (text ? text + '\n\n' : '') + 'Click to ' + (text ? 'edit the' : 'write a') + ' logical search: IDs and names with AND, OR, NOT, ( ) and @filters',
+    onclick: () => api.openSearch() },
+  icon('logic', 14), h('span.qmini-t' + (text ? '' : '.ph'), text || 'Logical search…'), ui.qOpen ? h('span.qmini-k', 'editing') : null);
+}
+
+/* ---- the logical search editor: opened by the compact box, shown below the “Focused on” bar ------------------------ */
 function flowSearchRow(ui, api) {
   const applied = exprToText(ui.focus);
   const inp = h('input', { type: 'text', id: 'flow-q', value: ui.draft != null ? ui.draft : applied, autocomplete: 'off', spellcheck: 'false',
@@ -131,12 +148,20 @@ function flowSearchRow(ui, api) {
   const apply = () => {
     const r = qParse(inp.value);
     if (r.err) { validate(); inp.focus(); inp.setSelectionRange(r.err.s, Math.max(r.err.s, r.err.e)); return; }
-    closeSug();
+    closeSug(); ui.qOpen = false;
     api.setFocus(r.ast, { cols: true, refocus: true });
   };
+  /* closes the editor; unapplied text is dropped */
+  const close = () => { closeSug(); ui.draft = null; ui.qOpen = false; api.controls(); const m = document.getElementById('flow-q-mini'); if (m) m.focus(); };
+  let row = null;
   inp.addEventListener('input', changed);
   inp.addEventListener('focus', () => { active(); validate(); });
-  inp.addEventListener('blur', () => setTimeout(() => { closeSug(); active(); }, 150));
+  /* leaving the editor closes it, unless it holds text that was not applied yet */
+  inp.addEventListener('blur', () => setTimeout(() => {
+    if (!row || !row.isConnected) return;
+    closeSug(); active();
+    if (!row.contains(document.activeElement) && ui.draft == null && ui.qOpen) { ui.qOpen = false; api.controls(); }
+  }, 150));
   inp.addEventListener('click', suggest);
   inp.addEventListener('keyup', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') suggest(); });
   inp.addEventListener('keydown', (e) => {
@@ -149,17 +174,14 @@ function flowSearchRow(ui, api) {
     } else if (e.key === 'Enter') { e.preventDefault(); apply(); }
     else if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation();
-      if (open) closeSug(); else { inp.value = applied; ui.draft = null; active(); validate(); }
+      if (open) closeSug(); else close();
     }
   });
   if (ui.draft != null) { active(); validate(); }
-  const nLib = searchLib.items.length;
-  return h('div.ctl.qrow', box, applyBtn,
+  row = h('div.ctl.qrow', { id: 'flow-q-row' }, box, applyBtn,
     h('button.icon-btn', { type: 'button', id: 'flow-q-help', tip: 'How the logical search works, with examples from this workbook', onclick: () => searchHelp(api) }, icon('info', 16)),
-    h('span.qsep'),
-    h('button.btn.sm', { type: 'button', id: 'flow-new-filter', tip: 'New content filter: find objects by what an attribute contains or does not contain (errors and warnings included) — by clicks', onclick: () => filterDialog(null, api) }, icon('plus', 13), 'Content filter'),
-    h('button.btn.sm.lib-btn' + (ui.libOpen ? '.on' : ''), { type: 'button', id: 'flow-lib-btn', 'aria-expanded': String(!!ui.libOpen), tip: 'Content filters and saved searches: combine them with AND, OR and NOT',
-      onclick: () => { ui.libOpen = !ui.libOpen; api.controls(); } }, icon('filter', 13), 'Filters & saved searches', h('span.count', nLib)));
+    h('button.icon-btn', { type: 'button', id: 'flow-q-close', tip: 'Close the editor without applying (Esc)', onclick: close }, icon('close', 14)));
+  return row;
 }
 
 /* ---- the “Focused on” bar: the search as chips; operators and NOT are clickable ---------------------------- */

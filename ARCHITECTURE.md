@@ -245,10 +245,16 @@ Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body o
    - *Focus bar* (`flowFocusBar`): the tree as chips; every “and” / “or” is a button that flips **that** operator and
      regroups the node with AND before OR (`exprToggleOp`: “A and B and C” → “(A and B) or C”); nested nodes are drawn
      as bracketed boxes; ¬ negates a chip, the red “not” removes the negation, × removes the chip.
-   - *Search field* (`flowSearchRow`): always in sync with the focus (`ui.draft` holds unapplied text); live validation
-     (“reads as …”, number of matching risks); suggestions for the word at the caret (objects by ID/name, then by title;
-     `@` lists the library; AND/OR/NOT where they fit); ↑ ↓ Enter/Tab; Enter applies; applying switches on the columns of
-     the types the search asks for (`exprTypes`).
+   - *Layout*: the view header holds, on the right from top to bottom, Export to Excel, “Hide not relevant”, “Content
+     filter” + “Filters & saved searches” (`flowToolButtons`) and the **compact search box** (`flowSearchMini`); the
+     Columns selector sits under the description. The box shows the current search as one line of text — also when it
+     was built by clicks — cut with “…” when it does not fit (full text in its tooltip).
+   - *Search editor* (`flowSearchRow`, open while `ui.qOpen`): a click on the box opens the large editor **below the
+     “Focused on” bar**, focused with the caret at the end. Live validation (“reads as …”, number of matching risks);
+     suggestions for the word at the caret (objects by ID/name, then by title; `@` lists the library; AND/OR/NOT where
+     they fit); ↑ ↓ Enter/Tab; Enter applies and closes it; applying switches on the columns of the types the search asks
+     for (`exprTypes`). Esc or × closes it without applying; leaving it closes it unless it holds unapplied text
+     (`ui.draft`).
    - *Content filters* (`FILTER_FIELDS`, `filterMatcher`, `filterSet`): one condition on one attribute of one object
      type — contains / does not contain a word or phrase (case-insensitive, optional whole word) / is empty / is not empty.
      Every type has “Any attribute” (own attributes, not links) and **Errors** / **Warnings** (title, message, cell text and
@@ -265,7 +271,8 @@ Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body o
 it is the only place where removed items can appear (with its own search). Everywhere else they are absent because
 views read `M.rmis`.
 
-**Hide not relevant** (`nrToggle` in a `.nr-slot`, always the last control of the view, aligned right; state
+**Hide not relevant** (`nrToggle` in a `.nr-slot`, always the last control of the view, aligned right — in Connections
+it is in the view header above the search tools; state
 `state.ui.<view>.hideNR…`, on at start, kept while the tab is open): one
 independent toggle in Risks (`risks.hideNR`), Threats (`threats.hideNR`, list only), Mitigations (`mit.hideNRg` groups
 tab, `mit.hideNRi` items tab) and Connections (`flow.hideNR`: hides not-relevant risks and threats with only such risks;

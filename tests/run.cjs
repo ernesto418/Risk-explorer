@@ -283,7 +283,9 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
   /* ---------- search in Connections: logical search, focus bar, content filters, library ---------- */
   const ALL_COLS = ['component', 'assumption', 'threat', 'risk', 'rmi', 'group'];
   const qFocus = () => page.evaluate(() => window.__rre.Q.exprToText(window.__rre.state().state.ui.flow.focus));
-  const qApply = async (text) => { await page.fill('#flow-q', text); await page.click('#flow-q-apply'); await page.waitForTimeout(250); };
+  const qOpen = async () => { if (!(await page.locator('#flow-q').count())) await page.click('#flow-q-mini'); };
+  const qApply = async (text) => { await qOpen(); await page.fill('#flow-q', text); await page.click('#flow-q-apply'); await page.waitForTimeout(250); };
+  const qMini = () => page.textContent('#flow-q-mini .qmini-t');
   const qCol = (t) => page.evaluate((x) => [...document.querySelectorAll('.fnode.t-' + x + ' .fnode-id')].map((e) => e.textContent).sort(), t);
   const allCols = async () => { await page.evaluate((c) => { window.__rre.state().state.ui.flow.cols = c.slice(); }, ALL_COLS); await nav(page, 'overview'); await nav(page, 'connections'); await page.waitForTimeout(200); };
   await test('F16', 'Logical search: parser, precedence (AND before OR), printer, operator switch and error messages with position', async () => {
@@ -350,19 +352,34 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(200); eq(await qFocus(), '', 'show everything');
     eq(page.errors, [], 'script errors');
   });
-  await test('F19', 'Search field: ID and name autocompletion (keyboard), Enter applies, errors are marked and nothing is applied, missing columns are switched on', async () => {
+  await test('F19', 'Search box: compact in the header with “…” when the search does not fit; a click opens the large editor below the focus bar; ID and name autocompletion, Enter applies and closes, errors are marked, Esc closes', async () => {
     await page.evaluate(() => { window.__rre.state().state.ui.flow.cols = ['threat', 'risk', 'rmi', 'group']; }); await nav(page, 'overview'); await nav(page, 'connections');
-    await page.click('#flow-q'); await page.keyboard.type('rmi-00'); await page.waitForTimeout(150);
+    const lay = await page.evaluate(() => { const y = (s) => document.querySelector(s).getBoundingClientRect().top, head = document.querySelector('.view-head');
+      return { inHead: ['#export-btn', '#nr-hideNR', '#flow-new-filter', '#flow-lib-btn', '#flow-q-mini'].every((s) => head.contains(document.querySelector(s))), order: y('#export-btn') < y('#nr-hideNR') && y('#nr-hideNR') < y('#flow-lib-btn') && y('#flow-lib-btn') < y('#flow-q-mini'), editor: !!document.getElementById('flow-q') }; });
+    eq(lay, { inHead: true, order: true, editor: false }, 'header: Export, Hide not relevant, filter buttons, compact search box (top to bottom); editor closed');
+    await page.keyboard.down('Control'); for (let i = 0; i < 7; i++) await page.click('.fnode.t-threat >> nth=' + i); await page.keyboard.up('Control'); await page.waitForTimeout(400);
+    const mini = await page.evaluate(() => { const t = document.querySelector('#flow-q-mini .qmini-t'); return { text: t.textContent, over: t.scrollWidth > t.clientWidth, ell: getComputedStyle(t).textOverflow, tip: document.getElementById('flow-q-mini').dataset.tip }; });
+    eq([mini.text, mini.over, mini.ell, mini.tip.startsWith(mini.text)], [await qFocus(), true, 'ellipsis', true], 'clicked search shown as text, cut with “…”, full text in the tooltip');
+    await page.click('#flow-q-mini'); await page.waitForTimeout(150);
+    const open = await page.evaluate(() => { const q = document.getElementById('flow-q'), bar = document.querySelector('.focusbar'), row = document.getElementById('flow-q-row');
+      return { focused: document.activeElement === q, below: !!(bar.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) && row.getBoundingClientRect().top > bar.getBoundingClientRect().bottom - 1, wider: row.getBoundingClientRect().width > 2 * document.getElementById('flow-q-mini').getBoundingClientRect().width, value: q.value.trim() }; });
+    eq(open, { focused: true, below: true, wider: true, value: mini.text }, 'click: large editor below the focus bar, focused, with the search');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150); eq(await page.locator('#flow-q').count(), 0, 'Esc closes the editor');
+    await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(150); eq(await qMini(), 'Logical search…', 'empty search: placeholder');
+    await page.click('#flow-q-mini'); await page.keyboard.type('rmi-00'); await page.waitForTimeout(150);
     const sug = await page.locator('.qsug-i').allTextContents(); assert(sug.length >= 3 && sug.every((x) => /^RMI-00\d/.test(x)), 'suggestions for rmi-00: ' + sug.slice(0, 3));
     await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
     const second = await page.locator('#flow-q').inputValue(); assert(/^RMI-00\d $/.test(second) && second.trim() === sug[1].slice(0, 7), 'ArrowDown + Enter inserted ' + second);
     await page.keyboard.type('and Edge Ga'); await page.waitForTimeout(150); eq((await page.locator('.qsug-i').first().textContent()).slice(0, 12), 'Edge Gateway', 'name with a space suggested');
     await page.keyboard.press('Tab'); await page.waitForTimeout(100); eq(await page.locator('#flow-q').inputValue(), second.trim() + ' and "Edge Gateway" ', 'Tab inserted the quoted name');
     await page.keyboard.press('Enter'); await page.waitForTimeout(300);
-    eq([await qFocus(), (await page.evaluate(() => window.__rre.state().state.ui.flow.cols)).includes('component')], [second.trim() + ' AND "Edge Gateway"', true], 'applied; components column switched on');
-    await page.fill('#flow-q', 'T.BSI.15 AND XYZ'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
-    eq([await qFocus(), await page.locator('.qstatus.err').count(), (await page.textContent('.qstatus.err code.qx mark'))], [second.trim() + ' AND "Edge Gateway"', 1, 'XYZ'], 'error shown and marked, focus unchanged');
-    await page.keyboard.press('Escape'); await page.waitForTimeout(100); eq(await page.locator('#flow-q').inputValue(), second.trim() + ' AND "Edge Gateway"', 'Escape restores the applied search');
+    const applied = second.trim() + ' AND "Edge Gateway"';
+    eq([await qFocus(), (await page.evaluate(() => window.__rre.state().state.ui.flow.cols)).includes('component'), await page.locator('#flow-q').count(), await qMini()], [applied, true, 0, applied], 'applied; components column switched on; editor closed; box shows the search');
+    await qOpen(); await page.fill('#flow-q', 'T.BSI.15 AND XYZ'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+    eq([await qFocus(), await page.locator('.qstatus.err').count(), (await page.textContent('.qstatus.err code.qx mark')), await page.locator('#flow-q').count()], [applied, 1, 'XYZ', 1], 'error shown and marked, focus unchanged, editor stays open');
+    await page.click('.view-head h1'); await page.waitForTimeout(300); eq(await page.locator('#flow-q').count(), 1, 'unapplied text keeps the editor open when clicking elsewhere');
+    await page.click('#flow-q-close'); await page.waitForTimeout(150); eq([await page.locator('#flow-q').count(), await qMini()], [0, applied], 'close drops the unapplied text');
+    await page.click('#flow-q-mini'); await page.click('.view-head h1'); await page.waitForTimeout(300); eq(await page.locator('#flow-q').count(), 0, 'without changes, clicking elsewhere closes it');
     await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(150); eq(page.errors, [], 'script errors');
   });
   await test('F20', 'Content filters by clicks (object → generic card → attribute → condition), errors and warnings included; saved, combined with AND / OR / NOT, saved searches nested; renaming and deleting are safe', async () => {
