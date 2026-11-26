@@ -8,7 +8,7 @@
   request (default-src 'none', connect-src 'none') and only run the one script and
   stylesheet embedded in this file (identified by their SHA-256 hashes).
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-W3Jis1SjnC7JWc3lpaWoco5TfErqFRh83PwXiwLkp5U='; style-src 'sha256-FV0uPOSsBq3R3TcCWbuVfZSOPVrVDWhC5rC38IDBc9I='; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-0Lu96UqbU9urbp4LqmeuODmewsgHYxd0XmWqJSFC+oY='; style-src 'sha256-Rc8NMLz/kU7p1Hu/sn2gtdz1UVCbW4R+IpaBU8+lt6M='; img-src data:; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Risk Register Explorer</title>
@@ -25,6 +25,7 @@
   --low: #0ca30c; --medium: #fab219; --high: #d03b3b;
   --c-assumption: #6250d6; --c-threat: #e87ba4; --c-risk: #2a78d6; --c-rmi: #1baf7a; --c-group: #eb6834; --c-component: #898781;
   --i-format: #6250d6; --i-consistency: #d03b3b; --i-warning: #c98500;
+  --crown: #f5bd1f; --crown-line: #9a6f00;
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
 }
@@ -35,6 +36,7 @@
   --accent: #3987e5; --accent-soft: #184f95; --grid: #2c2c2a; --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 18px rgba(0, 0, 0, .3);
   --c-assumption: #9085e9; --c-threat: #d55181; --c-risk: #3987e5; --c-rmi: #199e70; --c-group: #d95926; --c-component: #898781;
   --i-format: #9085e9; --i-consistency: #e66767; --i-warning: #fab219;
+  --crown: #fac938; --crown-line: #fac938;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -397,7 +399,18 @@ code.qx mark { background: color-mix(in srgb, var(--i-consistency) 28%, transpar
 .flow-head .view-head-r { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .flow-head #export-btn { order: -1; } /* Export to Excel on top, the search tools below it */
 .flow-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; width: min(440px, 100%); }
-.flow-cols { margin-top: 14px; flex-wrap: wrap; } .controls:empty { display: none; }
+.flow-cols { margin-top: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; } .flow-cols-r { flex-wrap: wrap; } .controls:empty { display: none; }
+/* Dominance: toggle above “Columns”; crowns above the active columns (outline = not dominant, yellow = dominant) */
+.dom-toggle .ico { color: var(--muted); }
+.dom-toggle.on { border-color: var(--crown-line); background: color-mix(in srgb, var(--crown) 16%, var(--surface)); }
+.dom-toggle.on .ico, .flow-col-h .dom-mark .ico, .seg.multi button.crown.on .ico { color: var(--crown-line); }
+.dom-toggle.on .ico path:first-child, .dom-mark .ico path:first-child, .seg button.crown.on .ico path:first-child { fill: var(--crown); }
+.flow-cols-r.dom { padding-top: 24px; } .seg.multi.dom { row-gap: 30px; }
+.colw { position: relative; display: inline-flex; }
+.seg button.crown { position: absolute; left: 50%; top: -28px; transform: translateX(-50%); width: 28px; height: 24px; padding: 0; justify-content: center; border-radius: 6px; }
+.seg.multi button.crown .ico { color: var(--muted); } .seg button.crown:hover { background: var(--surface-2); } .seg.multi button.crown:hover .ico { color: var(--text); }
+.seg button.crown.on { background: none; box-shadow: none; } .seg.multi button.crown.on:hover .ico { color: var(--crown-line); }
+.dom-mark { display: inline-flex; margin-left: auto; }
 .flow-tools-b { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .qmini { display: flex; align-items: center; gap: 7px; width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); text-align: left; min-width: 0; }
 .qmini:hover { border-color: var(--border-2); } .qmini.on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
@@ -1573,8 +1586,9 @@ const state = {
     mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true, hideRemoved: true },
     asm: { q: '' },
     comp: { when: 'before' },
-    /* focus: the search, an expression tree (05q-query.js) or null; draft: unapplied text of the search editor; qOpen: editor open; libOpen: library panel */
-    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: null, draft: null, qOpen: false, pending: [], hideNR: true, hideNRFlash: false, libOpen: false },
+    /* focus: the search, an expression tree (05q-query.js) or null; draft: unapplied text of the search editor; qOpen: editor open; libOpen: library panel;
+       dom: Dominance — null = off, else the dominant column (the crown) from which the search is evaluated */
+    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: null, draft: null, qOpen: false, pending: [], hideNR: true, hideNRFlash: false, libOpen: false, dom: null },
     issues: { cats: new Set(), q: '', by: 'type' },
   },
 };
@@ -2005,7 +2019,8 @@ function applyRiskFilter(risks, f) {
  * Every term asks a question about one ANCHOR of the view — normally a risk with its threat, components,
  * assumptions, mitigation items and groups: “is it linked to this object / to an object of this filter?”.
  * AND, OR and NOT combine the answers. The columns then show, for every anchor that satisfies the search, the
- * objects it links — restricted to the objects the search names (see qRestrict). Changes return new trees.
+ * objects it links — restricted to the objects the search names (see qRestrict). With Dominance on, the anchors are
+ * the objects of the dominant column instead (domAnchors / qRestrictDom). Changes return new trees.
  * ------------------------------------------------------------------------- */
 
 const QX = {
@@ -2404,15 +2419,36 @@ const qEmptyDims = () => ({ component: [], assumption: [], threat: [], risk: [],
  * objects no visible risk links — items no risk uses (with their groups), groups without items, components and
  * assumptions without visible risks. d[type] = the objects of that type the anchor links.
  */
+const qRiskDims = (r) => ({ component: r.components, assumption: r.assumptions, threat: r.threat ? [r.threat] : [], risk: [r], rmi: uniq(r.items.map((o) => o.rmi)), group: r.groups });
 function flowAnchors(baseRisks) {
   const vis = new Set(baseRisks), out = [];
-  for (const r of baseRisks) out.push({ r, d: { component: r.components, assumption: r.assumptions, threat: r.threat ? [r.threat] : [], risk: [r], rmi: uniq(r.items.map((o) => o.rmi)), group: r.groups } });
+  for (const r of baseRisks) out.push({ r, d: qRiskDims(r) });
   const alone = (o) => !o.risks.some((r) => vis.has(r));
   for (const m of M.rmis) if (alone(m)) out.push({ o: m, d: { ...qEmptyDims(), rmi: [m], group: m.groups } });
   for (const g of M.groups) if (!g.rmis.length) out.push({ o: g, d: { ...qEmptyDims(), group: [g] } });
   for (const c of M.components) if (alone(c)) out.push({ o: c, d: { ...qEmptyDims(), component: [c] } });
   for (const a of M.assumptions) if (alone(a)) out.push({ o: a, d: { ...qEmptyDims(), assumption: [a] } });
   return out;
+}
+/**
+ * Dominance (the crown on one column, T): the anchors are the objects of the dominant column and nothing else. Hidden
+ * like the column would hide them (“Hide not relevant”: not-relevant risks, threats whose risks are all hidden).
+ * d = what the object links — through its visible risks, items ↔ groups by the groups’ “RMI ID” cells (membership) —
+ * and d[T] = the object itself, so a term on another object of the dominant type never holds.
+ * rs = its visible risks (the paths the view can show).
+ */
+function domAnchors(baseRisks, T) {
+  if (T === 'risk') return baseRisks.map((r) => ({ r, o: r, rs: [r], d: qRiskDims(r) }));
+  const vis = new Set(baseRisks), active = new Set(M.rmis), via = (rs, f) => uniq(rs.flatMap(f));
+  const list = T === 'threat' ? M.threats.filter((t) => !t.risks.length || t.risks.some((r) => vis.has(r))) : { component: M.components, assumption: M.assumptions, rmi: M.rmis, group: M.groups }[T];
+  return list.map((o) => {
+    const rs = o.risks.filter((r) => vis.has(r));
+    const d = { component: via(rs, (r) => r.components), assumption: via(rs, (r) => r.assumptions), threat: via(rs, (r) => (r.threat ? [r.threat] : [])), risk: rs, rmi: via(rs, (r) => r.items.map((i) => i.rmi)), group: via(rs, (r) => r.groups) };
+    d[T] = [o];
+    if (T === 'rmi') d.group = o.groups;
+    if (T === 'group') d.rmi = o.rmis.filter((m) => active.has(m));
+    return { o, rs, d };
+  });
 }
 const qErr = (msg) => { const e = new Error(msg); e.qeval = true; return e; };
 /** Replaces library references by what they stand for: a filter by the set of objects it finds, a saved search by its tree. */
@@ -2453,13 +2489,47 @@ function qBool(n, a) { return n.k === 'set' ? qTest(n, a) : n.k === 'not' ? !qBo
  * (positive terms); a column it does not name shows everything the anchor links. Groups narrow the items to the items
  * through which the anchor reaches them; the groups column follows the items shown.
  */
+const qPos = (conj) => { const P = {}; for (const l of conj) if (!l.neg) { const t = l.set.type; if (!P[t]) P[t] = new Set(); for (const o of l.set.objs) P[t].add(o); } return P; };
+const qKeep = (list, S) => (S ? list.filter((x) => S.has(x)) : list);
 function qRestrict(d, conj) {
-  const P = {};
-  for (const l of conj) if (!l.neg) { const t = l.set.type; if (!P[t]) P[t] = new Set(); for (const o of l.set.objs) P[t].add(o); }
-  const keep = (list, S) => (S ? list.filter((x) => S.has(x)) : list);
+  const P = qPos(conj), keep = qKeep;
   const rmi = P.rmi ? keep(d.rmi, P.rmi) : P.group ? d.rmi.filter((m) => m.groups.some((g) => P.group.has(g))) : d.rmi;
   const group = P.group ? keep(d.group, P.group) : d.rmi.length ? uniq(rmi.flatMap((m) => m.groups)) : d.group;
   return { component: keep(d.component, P.component), assumption: keep(d.assumption, P.assumption), threat: d.threat, risk: d.risk, rmi, group };
+}
+/**
+ * Dominance: what a dominant object (anchor a of type T) that satisfies one conjunction shows — one view per witness
+ * risk (edges are drawn per risk) plus the object itself with its items / groups. Witness risks = its risks that link
+ * every object the conjunction names outside its own column and its item ↔ group membership; if no single risk does
+ * (an AND reached through different risks), those that link at least one; if it names nothing there, all its risks.
+ * A dominant group with named items reaches its risks only through those items. Every column keeps only the named
+ * objects (as in qRestrict); the dominant column shows the object itself.
+ */
+function qRestrictDom(a, conj, T) {
+  if (T === 'risk') return [conj.length ? qRestrict(a.d, conj) : a.d];
+  const P = qPos(conj), o = a.o;
+  const direct = (t) => t === T || (T === 'rmi' && t === 'group') || (T === 'group' && t === 'rmi');
+  const med = conj.filter((l) => !l.neg && !direct(l.set.type));
+  const links = (r, l) => qTest(l.set, { d: qRiskDims(r) });
+  const pick = (rs) => { const all = rs.filter((r) => med.every((l) => links(r, l))); return all.length ? all : rs.filter((r) => med.some((l) => links(r, l))); };
+  let items = T === 'group' ? qKeep(a.d.rmi, P.rmi) : null, cand = a.rs;
+  if (T === 'group' && P.rmi) { const own = new Set(items); cand = a.rs.filter((r) => r.items.some((i) => own.has(i.rmi))); }
+  let W = med.length ? pick(cand) : cand;
+  if (med.length && !W.length) W = pick(a.rs); // a dominant group whose named items do not reach the rest: the risks through its other items
+  if (T === 'group' && !P.rmi && med.length) { const ws = new Set(W); items = items.filter((m) => m.risks.some((r) => ws.has(r))); }
+  const own = T === 'group' ? new Set(items) : null, groups = T === 'rmi' ? qKeep(o.groups, P.group) : null;
+  const shows = W.map((r) => {
+    const s = qRestrict(qRiskDims(r), conj);
+    s[T] = [o];
+    if (T === 'rmi') s.group = groups;
+    if (T === 'group') s.rmi = uniq(r.items.map((i) => i.rmi)).filter((m) => own.has(m));
+    return s;
+  });
+  const base = { ...qEmptyDims(), [T]: [o] };
+  if (T === 'rmi') base.group = groups;
+  if (T === 'group') base.rmi = items;
+  shows.push(base);
+  return shows;
 }
 function qMerge(shows) { const out = {}; for (const t of Q_DIMS) out[t] = uniq(shows.flatMap((s) => s[t])); return out; }
 /**
@@ -2467,18 +2537,21 @@ function qMerge(shows) { const out = {}; for (const t of Q_DIMS) out[t] = uniq(s
  * shows = one restricted view per satisfied conjunction (edges are drawn per conjunction), show = their union;
  * matched = objects found by positive content filters; hidden = positive terms whose objects are all hidden by
  * “Hide not relevant” (labels, for the explanation when nothing is left).
+ * dom = the dominant column (Dominance on): the search is evaluated on the objects of that column (domAnchors,
+ * qRestrictDom); null = off, the anchors of flowAnchors as before.
  */
-function evalFocus(ast, baseRisks) {
-  const anchors = flowAnchors(baseRisks);
-  if (!ast) return { hits: anchors.map((a) => ({ a, shows: [a.d], show: a.d })), matched: new Set(), hidden: [] };
+function evalFocus(ast, baseRisks, dom) {
+  const anchors = dom ? domAnchors(baseRisks, dom) : flowAnchors(baseRisks);
+  const hit = (a, shows) => ({ a, shows, show: shows.length === 1 ? shows[0] : qMerge(shows) });
+  if (!ast) return { hits: anchors.map((a) => hit(a, dom ? qRestrictDom(a, [], dom) : [a.d])), matched: new Set(), hidden: [] };
   let core;
   try { core = qCore(ast, []); } catch (e) { if (!e.qeval) throw e; return { hits: [], matched: new Set(), hidden: [], error: e.message }; }
   const dnf = qDnf(core, false), hits = [];
   for (const a of anchors) {
     const shows = [];
-    if (dnf) { for (const conj of dnf) if (conj.every((l) => qTest(l.set, a) !== l.neg)) shows.push(qRestrict(a.d, conj)); }
-    else if (qBool(core, a)) shows.push(a.d);
-    if (shows.length) hits.push({ a, shows, show: shows.length === 1 ? shows[0] : qMerge(shows) });
+    if (dnf) { for (const conj of dnf) if (conj.every((l) => qTest(l.set, a) !== l.neg)) shows.push(...(dom ? qRestrictDom(a, conj, dom) : [qRestrict(a.d, conj)])); }
+    else if (qBool(core, a)) shows.push(...(dom ? qRestrictDom(a, [], dom) : [a.d]));
+    if (shows.length) hits.push(hit(a, shows));
   }
   const matched = new Set(), hidden = [], vis = new Set(baseRisks);
   const walk = (n, neg) => {
@@ -2992,9 +3065,14 @@ const sameSpot = (lc, e) => Math.abs(lc.x - e.clientX) <= DBL_PX && Math.abs(lc.
 document.addEventListener('keyup', (e) => { if ((e.key === 'Control' || e.key === 'Meta') && flowApply && state.view === 'connections') flowApply(); });
 window.addEventListener('blur', () => { if (flowApply && state.view === 'connections') flowApply(); });
 const FLOW_ORDER = ['component', 'assumption', 'threat', 'risk', 'rmi', 'group'];
+ICONS.crown = ['M2.6 11 2 4.6l3.3 3L8 3l2.7 4.6 3.3-3-.6 6.4z', 'M3 13.4h10'];
 VIEWS.connections = function () {
   const ui = state.ui.flow;
-  const controls = h('div.controls'), tools = h('div.flow-tools'), colsHost = h('div.ctl.flow-cols'), host = h('div.flow-host');
+  const controls = h('div.controls'), tools = h('div.flow-tools'), colsHost = h('div.flow-cols'), host = h('div.flow-host');
+  /* Dominance: the crown sits on an active column; when that column is switched off it moves to the leftmost active one */
+  const leftmost = () => FLOW_ORDER.find((t) => ui.cols.includes(t));
+  const domFix = () => { if (ui.dom && !ui.cols.includes(ui.dom)) ui.dom = leftmost(); };
+  const domName = (t) => TYPES[t].plural.toLowerCase();
   if (ui.draft == null) ui.qOpen = false; // the search editor opens only on request (or keeps unapplied text)
   flowUndo = (lc) => { if (lc.prev !== ui.focus) { ui.focus = lc.prev; ui.draft = null; drawControls(); draw(); } openObj(lc.o); };
   let cleanup = null;
@@ -3014,11 +3092,11 @@ VIEWS.connections = function () {
     const q = document.getElementById('flow-q');
     if (q) { if (q.value && !/\s$/.test(q.value)) q.value += ' '; q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
   };
-  const api = { setFocus, redraw: () => { drawControls(); draw(); }, controls: () => drawControls(), baseRisks, openSearch };
+  const api = { setFocus, redraw: () => { drawControls(); draw(); }, controls: () => drawControls(), baseRisks, openSearch, dom: () => ui.dom, evalFocus: (ast) => evalFocus(ast, baseRisks(), ui.dom) };
 
   const draw = () => {
     if (cleanup) { cleanup(); cleanup = null; }
-    clear(host);
+    clear(host); domFix();
     /* The search (ui.focus) is an expression tree (05q-query.js): every term asks whether an anchor — a risk with what it
        links, or an object no visible risk links — is linked to an object; AND / OR / NOT combine the answers. A plain
        click adds the object with AND, a Ctrl+click batch adds one OR term per object type. */
@@ -3027,17 +3105,24 @@ VIEWS.connections = function () {
     const cols = FLOW_ORDER.filter((t) => ui.cols.includes(t));
     /* “Hide not relevant”: not-relevant risks leave the view, and threats whose risks are all not relevant;
        every other column keeps its objects (only links through hidden risks disappear). */
-    const res = evalFocus(ui.focus, baseRisks());
+    /* Dominance on: every term is a question about one object of the dominant column; the other columns show only what
+       the dominant objects that satisfy the search link (05q-query.js, domAnchors / qRestrictDom). */
+    const dom = ui.dom, res = evalFocus(ui.focus, baseRisks(), dom);
     const showNR = () => h('button.btn', { type: 'button', id: 'nr-show', onclick: () => { ui.hideNR = false; ui.hideNRFlash = true; drawControls(); draw(); } }, 'Show not relevant');
     if (res.error) { host.append(emptyState('The search cannot be evaluated', res.error)); return; }
     if (f && !res.hits.length) {
       if (res.hidden.length) host.append(emptyState('The focus contains objects hidden by “Hide not relevant”', res.hidden.join(', ') + ': their risks are all not relevant (column “Threat relevance”). Switch the filter off to show them.'), h('p', showNR()));
+      else if (dom) host.append(emptyState('No path satisfies the whole search', 'Dominance is on: every part of the search is a question about one object of the dominant column, ' + domName(dom) + ', and none matches every part (an AND of two ' + domName(dom) + ' never does). Put the crown on another column or switch Dominance off, click an “and” in the focus bar to change it to “or”, or remove an object.'));
       else host.append(emptyState('No path satisfies the whole search', 'No risk (and no object without risks) of the risk analysis matches every part of the search. Click an “and” in the focus bar to change it to “or”, or remove an object.'));
       return;
     }
     const nodes = {};
     for (const t of cols) nodes[t] = uniq(res.hits.flatMap((x) => x.show[t]));
-    const riskHits = res.hits.filter((x) => x.a.r), riskSet = riskHits.map((x) => x.a.r), showOf = new Map(riskHits.map((x) => [x.a.r, x.show]));
+    /* every view of a hit with one risk is a path through that risk (without Dominance: the hit is the risk itself; with
+       Dominance on another column: one view per witness risk of the dominant object) */
+    const perRisk = new Map();
+    for (const x of res.hits) for (const s of x.shows) if (s.risk.length === 1) { const r = s.risk[0]; if (!perRisk.has(r)) perRisk.set(r, []); perRisk.get(r).push(s); }
+    const riskSet = baseRisks().filter((r) => perRisk.has(r)), showOf = new Map(riskSet.map((r) => [r, qMerge(perRisk.get(r))]));
     const baseSort = {
       component: (a, b) => natCmp(a.name, b.name), assumption: (a, b) => natCmp(a.id, b.id), threat: (a, b) => (a.num || 999) - (b.num || 999) || natCmp(a.id, b.id),
       risk: (a, b) => ((a.threat && a.threat.num) || 999) - ((b.threat && b.threat.num) || 999) || natCmp(a.id, b.id), rmi: (a, b) => natCmp(a.id, b.id), group: (a, b) => natCmp(a.id, b.id),
@@ -3049,15 +3134,13 @@ VIEWS.connections = function () {
     const edgeSets = [];
     for (let i = 0; i < cols.length - 1; i++) {
       const X = cols[i], Y = cols[i + 1], map = new Map();
-      const add = (a, b, r) => { const k = okey(a) + '>' + okey(b); let e = map.get(k); if (e) { if (r) e.w++; } else { e = { a, b, w: 1, warn: false }; map.set(k, e); } if (r) (e.risks || (e.risks = new Set())).add(r); };
+      const add = (a, b, r) => { const k = okey(a) + '>' + okey(b); let e = map.get(k); if (!e) { e = { a, b, w: 1, warn: false }; map.set(k, e); } if (r) (e.risks || (e.risks = new Set())).add(r); };
       if (X === 'rmi' && Y === 'group') {
         for (const x of res.hits) for (const s of x.shows) for (const m of s.rmi) for (const g of m.groups) if (s.group.includes(g)) add(m, g, null);
       } else {
-        for (const x of riskHits) {
-          const seen = new Set();
-          for (const s of x.shows) for (const a of s[X]) for (const b of s[Y]) { const k = okey(a) + '>' + okey(b); if (!seen.has(k)) { seen.add(k); add(a, b, x.a.r); } }
-        }
+        for (const x of res.hits) for (const s of x.shows) if (s.risk.length === 1) for (const a of s[X]) for (const b of s[Y]) add(a, b, s.risk[0]);
       }
+      for (const e of map.values()) if (e.risks) e.w = e.risks.size;
       edgeSets.push([...map.values()]);
     }
     /* reduce crossings: order each column by the average position of its neighbours */
@@ -3094,7 +3177,8 @@ VIEWS.connections = function () {
       setFocus([...byT.values()].reduce((acc, list) => exprAdd(acc, list.length > 1 ? { k: 'or', c: list.map(QX.obj) } : QX.obj(list[0]), 'and'), ui.focus));
     };
     for (const t of cols) {
-      const col = h('div.flow-col.t-' + t, h('div.flow-col-h', icon(TYPES[t].icon, 14), TYPES[t].plural, h('span.count', nodes[t].length)));
+      const col = h('div.flow-col.t-' + t + (dom === t ? '.dom' : ''), h('div.flow-col-h', icon(TYPES[t].icon, 14), TYPES[t].plural, h('span.count', nodes[t].length),
+        dom === t ? h('span.dom-mark', { tip: 'Dominant column: the search is evaluated from the ' + domName(t) + '; the other columns show only what they link' }, icon('crown', 13)) : null));
       for (const o of nodes[t]) {
         const isF = F.includes(o), isM = !isF && res.matched.has(o);
         const el = h('button.fnode.t-' + t + (isF ? '.focus' : '') + (isM ? '.match' : '') + (ui.pending.includes(o) ? '.pending' : ''), {
@@ -3183,7 +3267,8 @@ VIEWS.connections = function () {
     requestAnimationFrame(paint);
     cleanup = () => { if (ro) ro.disconnect(); };
     if (res.hidden.length) host.prepend(h('p.note.warn', icon('warning', 12), res.hidden.join(', ') + ' — hidden by “Hide not relevant”: their risks are all not relevant.', showNR()));
-    host.prepend(h('p.note', icon('info', 12), f ? 'Showing ' + total + ' objects on the paths that satisfy the search' + (riskSet.length ? ' (' + plural(riskSet.length, 'risk') + ')' : '') + '. Click another object to narrow further (AND); click an “and” / “or” in the focus bar to switch it. ' : total + ' objects. Click any object to isolate its connections, or Ctrl+click several and release Ctrl; hover to highlight only the objects linked to it through its own risks. Write a logical search in the box at the top right, or build content filters. ',
+    const domTxt = dom ? 'Dominance on ' + domName(dom) + ': the search is evaluated from the ' + domName(dom) + ' and the other columns show only what the ' + plural(nodes[dom] ? nodes[dom].length : res.hits.length, TYPES[dom].label.toLowerCase()) + ' shown link. ' : '';
+    host.prepend(h('p.note', icon('info', 12), domTxt + (f ? 'Showing ' + total + ' objects on the paths that satisfy the search' + (riskSet.length ? ' (' + plural(riskSet.length, 'risk') + ')' : '') + '. Click another object to narrow further (AND); click an “and” / “or” in the focus bar to switch it. ' : total + ' objects. Click any object to isolate its connections, or Ctrl+click several and release Ctrl; hover to highlight only the objects linked to it through its own risks. Write a logical search in the box at the top right, or build content filters. '),
       'Line thickness = number of risks behind a link. Items are linked to groups by the RMI IDs listed in the group’s “RMI ID” cell.'));
   };
   const drawControls = () => {
@@ -3191,11 +3276,29 @@ VIEWS.connections = function () {
     /* header, right: “Hide not relevant”, the filter buttons and the compact search box (Export to Excel above them) */
     fill(tools, h('div.ctl.nr-slot', nrToggle(ui, 'hideNR', plural(nrR, 'risk') + ', ' + plural(nrT, 'threat') + ' hidden', () => { drawControls(); draw(); })),
       flowToolButtons(ui, api), flowSearchMini(ui, api));
-    /* header, left (below the description): the columns */
-    fill(colsHost, h('span.ctl-l', 'Columns'), h('div.seg.multi', FLOW_ORDER.map((t) => h('button.t-' + t + (ui.cols.includes(t) ? '.on' : ''), {
-      type: 'button', 'aria-pressed': String(ui.cols.includes(t)),
-      onclick: () => { if (ui.cols.includes(t)) { if (ui.cols.length > 2) ui.cols = ui.cols.filter((x) => x !== t); } else ui.cols = ui.cols.concat(t); drawControls(); draw(); },
-    }, icon(TYPES[t].icon, 13), TYPES[t].plural))));
+    /* header, left (below the description): “Dominance” and, below it, the columns; with Dominance on, a crown above
+       every active column — the yellow one is the dominant column (one at a time) */
+    domFix();
+    const domOn = !!ui.dom;
+    const domBtn = h('button.btn.sm.dom-toggle' + (domOn ? '.on' : ''), {
+      type: 'button', id: 'flow-dom', 'aria-pressed': String(domOn),
+      tip: (domOn ? 'On' : 'Off') + ': Dominance evaluates the search from one column (the yellow crown above the columns). Every part of the search then asks whether an object of that column is linked to the object it names, and the other columns show only what the shown objects of that column link. Off = every risk (and every object without risks) is a candidate, as before.' + (domOn ? '' : '\nClick to switch it on (crown on the leftmost column).'),
+      onclick: () => { ui.dom = domOn ? null : leftmost(); drawControls(); draw(); },
+    }, icon('crown', 13), 'Dominance', domOn ? h('span.muted.small', '· ' + TYPES[ui.dom].plural) : null);
+    fill(colsHost, h('div.ctl', domBtn), h('div.ctl.flow-cols-r' + (domOn ? '.dom' : ''), h('span.ctl-l', 'Columns'), h('div.seg.multi' + (domOn ? '.dom' : ''), FLOW_ORDER.map((t) => {
+      const on = ui.cols.includes(t);
+      const btn = h('button.t-' + t + (on ? '.on' : ''), {
+        type: 'button', 'aria-pressed': String(on),
+        onclick: () => { if (on) { if (ui.cols.length > 2) ui.cols = ui.cols.filter((x) => x !== t); } else ui.cols = ui.cols.concat(t); domFix(); drawControls(); draw(); },
+      }, icon(TYPES[t].icon, 13), TYPES[t].plural);
+      if (!domOn) return btn;
+      const crown = on ? h('button.crown.t-' + t + (ui.dom === t ? '.on' : ''), {
+        type: 'button', 'aria-pressed': String(ui.dom === t), 'aria-label': 'Dominant column: ' + TYPES[t].plural,
+        tip: ui.dom === t ? 'Dominant column: the search is evaluated from the ' + domName(t) + '.' : 'Make ' + TYPES[t].plural + ' the dominant column: evaluate the search from the ' + domName(t) + '.',
+        onclick: () => { if (ui.dom !== t) { ui.dom = t; drawControls(); draw(); } },
+      }, icon('crown', 15)) : null;
+      return h('span.colw', crown, btn);
+    }))));
     clear(controls);
     if (ui.focus) controls.append(flowFocusBar(ui, api));
     if (ui.qOpen) controls.append(flowSearchRow(ui, api)); // the large editor, below the “Focused on” bar
@@ -3260,7 +3363,8 @@ VIEWS.issues = function () {
  * the library of content filters and saved searches, the click-by-click content
  * filter builder (object → generic card → attribute → condition) and the
  * download / load of the library as a JSON file. Logic: 05q-query.js.
- * `api` (from VIEWS.connections): setFocus(expr, {cols, refocus}), redraw(), controls(), baseRisks(), openSearch().
+ * `api` (from VIEWS.connections): setFocus(expr, {cols, refocus}), redraw(), controls(), baseRisks(), openSearch(),
+ * dom() (the dominant column or null), evalFocus(ast) (the search evaluated as the view does, Dominance included).
  * ------------------------------------------------------------------------- */
 
 ICONS.filter = ['M2.2 3h11.6L9.4 8.4v4.4l-2.8-1.4v-3z'];
@@ -3325,9 +3429,11 @@ function flowSearchRow(ui, api) {
       status.className = 'qstatus';
       fill(status, h('span.qmsg', dirty ? 'Empty — Enter shows everything again.' : 'Type an ID or a name and pick a suggestion (↑ ↓ Enter), then AND, OR or NOT. Brackets group; @ inserts a content filter or saved search.'), palette());
     } else {
-      const ev = evalFocus(r.ast, api.baseRisks()), nr = ev.hits.filter((x) => x.a.r).length, other = ev.hits.length - nr;
+      /* Dominance on: the count is of objects of the dominant column (the search is evaluated on them) */
+      const ev = api.evalFocus(r.ast), dom = api.dom(), nr = ev.hits.filter((x) => x.a.r).length, other = ev.hits.length - nr;
+      const n = dom ? plural(ev.hits.length, TYPES[dom].label.toLowerCase()) + ' (dominant column)' : plural(nr, 'risk') + (other ? ' + ' + plural(other, 'object') + ' without risks' : '');
       status.className = 'qstatus ' + (ev.error ? 'err' : 'ok');
-      fill(status, icon(ev.error ? 'warning' : 'check', 12), h('span.qmsg', ev.error ? ev.error : !ev.hits.length ? 'Nothing matches — an AND may be too strict' : plural(nr, 'risk') + (other ? ' + ' + plural(other, 'object') + ' without risks' : '') + ' match'),
+      fill(status, icon(ev.error ? 'warning' : 'check', 12), h('span.qmsg', ev.error ? ev.error : !ev.hits.length ? 'Nothing matches — an AND may be too strict' : n + ' match'),
         h('span.muted', 'reads as'), h('code.qreads', exprToText(r.ast)), dirty ? h('span.muted', '— Enter to apply') : null, palette());
     }
   };
@@ -4157,7 +4263,8 @@ const EXPORTS = {
     const L = flowLast || { riskSet: M.risks, nodes: {}, cols: [] }, focus = exprToText(state.ui.flow.focus);
     /* the definitions of the library entries the search uses, so the export says what @name meant */
     const refs = uniq(exprAtoms(state.ui.flow.focus).filter((x) => x.n.k === 'ref').map((x) => x.n.name)).map(libGet).filter(Boolean).map((it) => '@' + it.name + ' = ' + (it.kind === 'filter' ? filterDesc(it) : it.expr));
-    return { filter: [focus ? 'search = ' + focus : '', refs.join('; '), state.ui.flow.hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none', sheets: [
+    const dom = state.ui.flow.dom;
+    return { filter: [dom ? 'dominance = ' + TYPES[dom].plural : '', focus ? 'search = ' + focus : '', refs.join('; '), state.ui.flow.hideNR ? 'hide not relevant = on' : ''].filter(Boolean).join(', ') || 'none', sheets: [
       { name: 'Paths', cols: [['Risk ID', 12], ['Threat', 12], ['Components', 18], ['Assumptions', 12], ['Mitigation items', 14], ['Mitigation groups', 12], ['Risk index after', 9]],
         rows: L.riskSet.map((r) => [r.id, r.threat ? r.threat.id : '', r.components.map((c) => c.name).join('\n'), ids(r.assumptions), ids(uniq(r.items.map((o) => o.rmi))), ids(r.groups), num0(r.residual)]) },
       { name: 'Objects shown', cols: [['Type', 16], ['ID', 14], ['Title', 70]], rows: L.cols.flatMap((t) => (L.nodes[t] || []).map((o) => [TYPES[t].label, objLabel(o), objTitle(o) || ''])) }] };

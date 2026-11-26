@@ -58,7 +58,7 @@ everywhere else.
 Overview · Risk matrix (risks or threats per cell; before, after, side by side, movement) · Risks · Threats (coverage of
 the 47 elementary threats) · Mitigations (items and groups) · Assumptions · Components (exposure map) · Connections
 (linked columns with hover tracing and a search: click = AND, Ctrl+click = OR, double-click = details, logical
-search and content filters — see below) · History (baselines and change logs) · Errors & warnings (format errors,
+search, content filters and an optional point of view, *Dominance* — see below) · History (baselines and change logs) · Errors & warnings (format errors,
 consistency errors, warnings, each with sheet, cell and line). Every module can be exported to a new Excel file.
 
 ## Searching in Connections
@@ -83,6 +83,18 @@ consistency errors, warnings, each with sheet, cell and line). Every module can 
 - **Meaning.** Every term asks whether a path of the risk analysis (a risk with its threat, components, assumptions,
   mitigation items and groups) is linked to the object: `A AND B` = risks linked to both, `NOT A` = risks not linked to
   A. The columns then show only the objects the search names, plus everything else those risks link.
+- **Dominance (point of view).** Off by default; then everything works as described above. Click **Dominance** (above
+  *Columns*) to switch it on: a crown appears above every active column and the crown of the leftmost one is yellow.
+  Click another crown to choose the **dominant column** (one at a time). The search is then evaluated from that column:
+  every term asks whether an object of that column is linked to the object it names. With the crown on mitigation
+  items, `RMG01 AND RMG04` asks for an item that is in both groups; with the crown on risks, for a risk treated by both
+  groups through any of its items. The dominant column shows its objects that satisfy the search; the other columns show
+  only what those objects link, on the paths that satisfy the search (e.g. crown on components, `RMG01`: only the risks
+  that RMG01 treats). Objects linked to no shown dominant object disappear — with the crown on components, the
+  assumptions that no component reaches through a risk (the components named in the assumptions sheet are not used),
+  with the crown on risks, the unused items. Two objects of the dominant column joined with AND never match (an object
+  is not another one); use OR. Saved searches and filters are not tied to a crown: they are evaluated from the current
+  one. Switching the dominant column off moves the crown to the leftmost active column; the export states the dominance.
 - **Where they are kept.** Filters and saved searches stay while the tab is open (also when you reload or open another
   workbook). Nothing is stored in the browser: **Download library** saves them as a JSON file and **Load library…**
   reads it back — also to share them with colleagues. The Connections export states the search and what each `@name`

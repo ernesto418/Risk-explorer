@@ -37,7 +37,7 @@ change needs. Sections are self-contained; cross-references are given as `§n`.
 | New view or change a view | §8, §9, recipe 18.4 |
 | Matrix, colors, thresholds, scale values | §7, §9 |
 | Connections view (focus, hover, clicks) | §9.8 |
-| Connections search (logical search, content filters, library) | §9.8, §9.11, §14, recipe 18.6 |
+| Connections search (logical search, content filters, library, Dominance) | §9.8, §9.11, §14, recipe 18.6 |
 | Baselines, logs, History | §10, §12 |
 | Export | §13 |
 | Workbook does not open / wrong values | §5, §4 |
@@ -220,7 +220,8 @@ Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body o
 3. **risks** – filterable, groupable list of risk cards. 4. **threats** – 47-tile BSI coverage + threat cards.
 5. **mitigations** – groups (reach bars, cards) and all items. 6. **assumptions**. 7. **components** – heat map.
 8. **connections** – columns of object types, links derived through risks, SVG curves.
-   Focus = the **search**, an expression tree (`state.ui.flow.focus`, §9.11). A plain click adds the object with AND;
+   Focus = the **search**, an expression tree (`state.ui.flow.focus`, §9.11), evaluated from the risks or — with
+   **Dominance** on — from the dominant column chosen with the crown (`state.ui.flow.dom`, §9.11). A plain click adds the object with AND;
    a Ctrl/Cmd+click batch (applied on key release) adds one OR term per object type. The search can also be typed
    (search field with autocompletion) and combined with content filters and saved searches (§9.11). Every change goes
    through `setFocus(expr, {cols, refocus})` inside the view. Hover highlights only objects linked through the
@@ -242,12 +243,27 @@ Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body o
      (`qDnf`, at most 512 conjunctions, otherwise no column restriction): for every satisfied conjunction each column
      keeps only the objects the conjunction names positively (`qRestrict`; groups narrow the items to those in the
      groups, the groups column follows the items shown). Edges are drawn per conjunction, weight = number of risks.
+   - *Dominance* (`state.ui.flow.dom`: null = off, else the dominant type; D24): the search is evaluated **from one column**.
+     Off = the anchors above, unchanged. On (`evalFocus(ast, baseRisks, dom)`): the anchors are only the objects of the
+     dominant column (`domAnchors`; hidden like the column hides them — not-relevant risks, threats whose risks are all
+     hidden; threats without risks are shown) and `d` is what each one links through its visible risks, items ↔ groups
+     by membership; `d[dom]` = the object itself, so `A AND B` of the dominant type never holds. For each satisfied
+     conjunction `qRestrictDom` returns one view per **witness risk** — the object’s risks that link every object the
+     conjunction names outside its own column and its item ↔ group membership; if none does, those that link at least
+     one; if it names nothing there, all its risks (a dominant group with named items reaches its risks only through
+     them) — plus the object itself with its items / groups; named columns keep only the named objects (`qRestrict` per
+     risk). Objects of the other columns appear only through these views. The view takes every view with one risk as a
+     path through that risk (`showOf`, hover, edges; weight = distinct risks). UI: the **Dominance** toggle above
+     *Columns* (`#flow-dom`); with it on, a crown (`.crown`) above every active column, yellow = dominant, one at a time;
+     the leftmost active column at switch-on and when the dominant column is switched off (`domFix`); a crown in the
+     dominant column’s header. The editor counts objects of the dominant column (`api.evalFocus`, `api.dom`); the
+     Connections export states `dominance = …`. Library entries do not store a crown (the current one applies).
    - *Focus bar* (`flowFocusBar`): the tree as chips; every “and” / “or” is a button that flips **that** operator and
      regroups the node with AND before OR (`exprToggleOp`: “A and B and C” → “(A and B) or C”); nested nodes are drawn
      as bracketed boxes; ¬ negates a chip, the red “not” removes the negation, × removes the chip.
    - *Layout*: the view header holds, on the right from top to bottom, Export to Excel, “Hide not relevant”, “Content
      filter” + “Filters & saved searches” (`flowToolButtons`) and the **compact search box** (`flowSearchMini`); the
-     Columns selector sits under the description. The box shows the current search as one line of text — also when it
+     **Dominance** toggle and, below it, the Columns selector (crowns above it when Dominance is on) sit under the description. The box shows the current search as one line of text — also when it
      was built by clicks — cut with “…” when it does not fit (full text in its tooltip).
    - *Search editor* (`flowSearchRow`, open while `ui.qOpen`): a click on the box opens the large editor **below the
      “Focused on” bar**, focused with the caret at the end. Live validation (“reads as …”, number of matching risks);
@@ -403,6 +419,7 @@ Write tests use the browser’s private file system (OPFS) and shimmed pickers �
 | D21 | Connections search = expression tree over objects and `@` library entries; each term is a question about an anchor (risk-level: “linked to X?”); columns restricted per DNF conjunction to the objects named positively; AND binds before OR; clicking one operator flips only it and regroups | Owner request (2026-11): switch and/or in the focus bar, write own logical expressions with ID autocompletion. Risk-level terms keep the click behaviour (`A AND B` = risks linked to both, also for two objects of one type) and make NOT intuitive (“risks without this item”). |
 | D22 | Content filter = one condition (contains / does not contain / is empty / is not empty) on one attribute of one object type, errors and warnings included; filters and saved searches combine through the same logic language | Owner request (2026-11), built by clicks (object → generic card → attribute). One condition per filter keeps each filter readable; combinations are expressed — and saved — as searches. |
 | D23 | Library of filters and searches kept in memory; kept between sessions only as a downloaded JSON file loaded again by the user; nothing in `localStorage` | “Stays in memory” promise and §14: filter words can contain workbook content; `file://` pages share one storage origin. Can be changed by the owner (then update §14 and test S4). |
+| D24 | Connections **Dominance**: optional point of view, off by default (off = D21 unchanged); the crown chooses the dominant column, whose objects become the only anchors; other columns show only what the shown dominant objects link, on the witness risks of the search (paths that satisfy it); assumption ↔ component only through risks (the “Affected components” of the assumptions sheet is not used); default crown = leftmost active column; a crown is applied before the search and is not part of saved searches | Owner request (2026-11): the meaning of AND depends on the point of view (`RMG01 AND RMG04` = an item in both groups with the crown on items, a risk treated by both with the crown on risks). Owner decisions: only paths that satisfy the search (not every risk of a dominant object), objects linked to no dominant object hidden also with the crown on risks, the direct assumption → component link ignored for now. |
 
 ## 17. Known limitations and open points
 

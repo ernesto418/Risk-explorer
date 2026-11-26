@@ -5,7 +5,8 @@
  * the library of content filters and saved searches, the click-by-click content
  * filter builder (object → generic card → attribute → condition) and the
  * download / load of the library as a JSON file. Logic: 05q-query.js.
- * `api` (from VIEWS.connections): setFocus(expr, {cols, refocus}), redraw(), controls(), baseRisks(), openSearch().
+ * `api` (from VIEWS.connections): setFocus(expr, {cols, refocus}), redraw(), controls(), baseRisks(), openSearch(),
+ * dom() (the dominant column or null), evalFocus(ast) (the search evaluated as the view does, Dominance included).
  * ------------------------------------------------------------------------- */
 
 ICONS.filter = ['M2.2 3h11.6L9.4 8.4v4.4l-2.8-1.4v-3z'];
@@ -70,9 +71,11 @@ function flowSearchRow(ui, api) {
       status.className = 'qstatus';
       fill(status, h('span.qmsg', dirty ? 'Empty — Enter shows everything again.' : 'Type an ID or a name and pick a suggestion (↑ ↓ Enter), then AND, OR or NOT. Brackets group; @ inserts a content filter or saved search.'), palette());
     } else {
-      const ev = evalFocus(r.ast, api.baseRisks()), nr = ev.hits.filter((x) => x.a.r).length, other = ev.hits.length - nr;
+      /* Dominance on: the count is of objects of the dominant column (the search is evaluated on them) */
+      const ev = api.evalFocus(r.ast), dom = api.dom(), nr = ev.hits.filter((x) => x.a.r).length, other = ev.hits.length - nr;
+      const n = dom ? plural(ev.hits.length, TYPES[dom].label.toLowerCase()) + ' (dominant column)' : plural(nr, 'risk') + (other ? ' + ' + plural(other, 'object') + ' without risks' : '');
       status.className = 'qstatus ' + (ev.error ? 'err' : 'ok');
-      fill(status, icon(ev.error ? 'warning' : 'check', 12), h('span.qmsg', ev.error ? ev.error : !ev.hits.length ? 'Nothing matches — an AND may be too strict' : plural(nr, 'risk') + (other ? ' + ' + plural(other, 'object') + ' without risks' : '') + ' match'),
+      fill(status, icon(ev.error ? 'warning' : 'check', 12), h('span.qmsg', ev.error ? ev.error : !ev.hits.length ? 'Nothing matches — an AND may be too strict' : n + ' match'),
         h('span.muted', 'reads as'), h('code.qreads', exprToText(r.ast)), dirty ? h('span.muted', '— Enter to apply') : null, palette());
     }
   };

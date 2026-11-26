@@ -10,7 +10,8 @@
  * Every term asks a question about one ANCHOR of the view — normally a risk with its threat, components,
  * assumptions, mitigation items and groups: “is it linked to this object / to an object of this filter?”.
  * AND, OR and NOT combine the answers. The columns then show, for every anchor that satisfies the search, the
- * objects it links — restricted to the objects the search names (see qRestrict). Changes return new trees.
+ * objects it links — restricted to the objects the search names (see qRestrict). With Dominance on, the anchors are
+ * the objects of the dominant column instead (domAnchors / qRestrictDom). Changes return new trees.
  * ------------------------------------------------------------------------- */
 
 const QX = {
@@ -409,15 +410,36 @@ const qEmptyDims = () => ({ component: [], assumption: [], threat: [], risk: [],
  * objects no visible risk links — items no risk uses (with their groups), groups without items, components and
  * assumptions without visible risks. d[type] = the objects of that type the anchor links.
  */
+const qRiskDims = (r) => ({ component: r.components, assumption: r.assumptions, threat: r.threat ? [r.threat] : [], risk: [r], rmi: uniq(r.items.map((o) => o.rmi)), group: r.groups });
 function flowAnchors(baseRisks) {
   const vis = new Set(baseRisks), out = [];
-  for (const r of baseRisks) out.push({ r, d: { component: r.components, assumption: r.assumptions, threat: r.threat ? [r.threat] : [], risk: [r], rmi: uniq(r.items.map((o) => o.rmi)), group: r.groups } });
+  for (const r of baseRisks) out.push({ r, d: qRiskDims(r) });
   const alone = (o) => !o.risks.some((r) => vis.has(r));
   for (const m of M.rmis) if (alone(m)) out.push({ o: m, d: { ...qEmptyDims(), rmi: [m], group: m.groups } });
   for (const g of M.groups) if (!g.rmis.length) out.push({ o: g, d: { ...qEmptyDims(), group: [g] } });
   for (const c of M.components) if (alone(c)) out.push({ o: c, d: { ...qEmptyDims(), component: [c] } });
   for (const a of M.assumptions) if (alone(a)) out.push({ o: a, d: { ...qEmptyDims(), assumption: [a] } });
   return out;
+}
+/**
+ * Dominance (the crown on one column, T): the anchors are the objects of the dominant column and nothing else. Hidden
+ * like the column would hide them (“Hide not relevant”: not-relevant risks, threats whose risks are all hidden).
+ * d = what the object links — through its visible risks, items ↔ groups by the groups’ “RMI ID” cells (membership) —
+ * and d[T] = the object itself, so a term on another object of the dominant type never holds.
+ * rs = its visible risks (the paths the view can show).
+ */
+function domAnchors(baseRisks, T) {
+  if (T === 'risk') return baseRisks.map((r) => ({ r, o: r, rs: [r], d: qRiskDims(r) }));
+  const vis = new Set(baseRisks), active = new Set(M.rmis), via = (rs, f) => uniq(rs.flatMap(f));
+  const list = T === 'threat' ? M.threats.filter((t) => !t.risks.length || t.risks.some((r) => vis.has(r))) : { component: M.components, assumption: M.assumptions, rmi: M.rmis, group: M.groups }[T];
+  return list.map((o) => {
+    const rs = o.risks.filter((r) => vis.has(r));
+    const d = { component: via(rs, (r) => r.components), assumption: via(rs, (r) => r.assumptions), threat: via(rs, (r) => (r.threat ? [r.threat] : [])), risk: rs, rmi: via(rs, (r) => r.items.map((i) => i.rmi)), group: via(rs, (r) => r.groups) };
+    d[T] = [o];
+    if (T === 'rmi') d.group = o.groups;
+    if (T === 'group') d.rmi = o.rmis.filter((m) => active.has(m));
+    return { o, rs, d };
+  });
 }
 const qErr = (msg) => { const e = new Error(msg); e.qeval = true; return e; };
 /** Replaces library references by what they stand for: a filter by the set of objects it finds, a saved search by its tree. */
@@ -458,13 +480,47 @@ function qBool(n, a) { return n.k === 'set' ? qTest(n, a) : n.k === 'not' ? !qBo
  * (positive terms); a column it does not name shows everything the anchor links. Groups narrow the items to the items
  * through which the anchor reaches them; the groups column follows the items shown.
  */
+const qPos = (conj) => { const P = {}; for (const l of conj) if (!l.neg) { const t = l.set.type; if (!P[t]) P[t] = new Set(); for (const o of l.set.objs) P[t].add(o); } return P; };
+const qKeep = (list, S) => (S ? list.filter((x) => S.has(x)) : list);
 function qRestrict(d, conj) {
-  const P = {};
-  for (const l of conj) if (!l.neg) { const t = l.set.type; if (!P[t]) P[t] = new Set(); for (const o of l.set.objs) P[t].add(o); }
-  const keep = (list, S) => (S ? list.filter((x) => S.has(x)) : list);
+  const P = qPos(conj), keep = qKeep;
   const rmi = P.rmi ? keep(d.rmi, P.rmi) : P.group ? d.rmi.filter((m) => m.groups.some((g) => P.group.has(g))) : d.rmi;
   const group = P.group ? keep(d.group, P.group) : d.rmi.length ? uniq(rmi.flatMap((m) => m.groups)) : d.group;
   return { component: keep(d.component, P.component), assumption: keep(d.assumption, P.assumption), threat: d.threat, risk: d.risk, rmi, group };
+}
+/**
+ * Dominance: what a dominant object (anchor a of type T) that satisfies one conjunction shows — one view per witness
+ * risk (edges are drawn per risk) plus the object itself with its items / groups. Witness risks = its risks that link
+ * every object the conjunction names outside its own column and its item ↔ group membership; if no single risk does
+ * (an AND reached through different risks), those that link at least one; if it names nothing there, all its risks.
+ * A dominant group with named items reaches its risks only through those items. Every column keeps only the named
+ * objects (as in qRestrict); the dominant column shows the object itself.
+ */
+function qRestrictDom(a, conj, T) {
+  if (T === 'risk') return [conj.length ? qRestrict(a.d, conj) : a.d];
+  const P = qPos(conj), o = a.o;
+  const direct = (t) => t === T || (T === 'rmi' && t === 'group') || (T === 'group' && t === 'rmi');
+  const med = conj.filter((l) => !l.neg && !direct(l.set.type));
+  const links = (r, l) => qTest(l.set, { d: qRiskDims(r) });
+  const pick = (rs) => { const all = rs.filter((r) => med.every((l) => links(r, l))); return all.length ? all : rs.filter((r) => med.some((l) => links(r, l))); };
+  let items = T === 'group' ? qKeep(a.d.rmi, P.rmi) : null, cand = a.rs;
+  if (T === 'group' && P.rmi) { const own = new Set(items); cand = a.rs.filter((r) => r.items.some((i) => own.has(i.rmi))); }
+  let W = med.length ? pick(cand) : cand;
+  if (med.length && !W.length) W = pick(a.rs); // a dominant group whose named items do not reach the rest: the risks through its other items
+  if (T === 'group' && !P.rmi && med.length) { const ws = new Set(W); items = items.filter((m) => m.risks.some((r) => ws.has(r))); }
+  const own = T === 'group' ? new Set(items) : null, groups = T === 'rmi' ? qKeep(o.groups, P.group) : null;
+  const shows = W.map((r) => {
+    const s = qRestrict(qRiskDims(r), conj);
+    s[T] = [o];
+    if (T === 'rmi') s.group = groups;
+    if (T === 'group') s.rmi = uniq(r.items.map((i) => i.rmi)).filter((m) => own.has(m));
+    return s;
+  });
+  const base = { ...qEmptyDims(), [T]: [o] };
+  if (T === 'rmi') base.group = groups;
+  if (T === 'group') base.rmi = items;
+  shows.push(base);
+  return shows;
 }
 function qMerge(shows) { const out = {}; for (const t of Q_DIMS) out[t] = uniq(shows.flatMap((s) => s[t])); return out; }
 /**
@@ -472,18 +528,21 @@ function qMerge(shows) { const out = {}; for (const t of Q_DIMS) out[t] = uniq(s
  * shows = one restricted view per satisfied conjunction (edges are drawn per conjunction), show = their union;
  * matched = objects found by positive content filters; hidden = positive terms whose objects are all hidden by
  * “Hide not relevant” (labels, for the explanation when nothing is left).
+ * dom = the dominant column (Dominance on): the search is evaluated on the objects of that column (domAnchors,
+ * qRestrictDom); null = off, the anchors of flowAnchors as before.
  */
-function evalFocus(ast, baseRisks) {
-  const anchors = flowAnchors(baseRisks);
-  if (!ast) return { hits: anchors.map((a) => ({ a, shows: [a.d], show: a.d })), matched: new Set(), hidden: [] };
+function evalFocus(ast, baseRisks, dom) {
+  const anchors = dom ? domAnchors(baseRisks, dom) : flowAnchors(baseRisks);
+  const hit = (a, shows) => ({ a, shows, show: shows.length === 1 ? shows[0] : qMerge(shows) });
+  if (!ast) return { hits: anchors.map((a) => hit(a, dom ? qRestrictDom(a, [], dom) : [a.d])), matched: new Set(), hidden: [] };
   let core;
   try { core = qCore(ast, []); } catch (e) { if (!e.qeval) throw e; return { hits: [], matched: new Set(), hidden: [], error: e.message }; }
   const dnf = qDnf(core, false), hits = [];
   for (const a of anchors) {
     const shows = [];
-    if (dnf) { for (const conj of dnf) if (conj.every((l) => qTest(l.set, a) !== l.neg)) shows.push(qRestrict(a.d, conj)); }
-    else if (qBool(core, a)) shows.push(a.d);
-    if (shows.length) hits.push({ a, shows, show: shows.length === 1 ? shows[0] : qMerge(shows) });
+    if (dnf) { for (const conj of dnf) if (conj.every((l) => qTest(l.set, a) !== l.neg)) shows.push(...(dom ? qRestrictDom(a, conj, dom) : [qRestrict(a.d, conj)])); }
+    else if (qBool(core, a)) shows.push(...(dom ? qRestrictDom(a, [], dom) : [a.d]));
+    if (shows.length) hits.push(hit(a, shows));
   }
   const matched = new Set(), hidden = [], vis = new Set(baseRisks);
   const walk = (n, neg) => {

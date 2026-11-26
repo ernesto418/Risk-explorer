@@ -23,8 +23,9 @@ const state = {
     mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true, hideRemoved: true },
     asm: { q: '' },
     comp: { when: 'before' },
-    /* focus: the search, an expression tree (05q-query.js) or null; draft: unapplied text of the search editor; qOpen: editor open; libOpen: library panel */
-    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: null, draft: null, qOpen: false, pending: [], hideNR: true, hideNRFlash: false, libOpen: false },
+    /* focus: the search, an expression tree (05q-query.js) or null; draft: unapplied text of the search editor; qOpen: editor open; libOpen: library panel;
+       dom: Dominance — null = off, else the dominant column (the crown) from which the search is evaluated */
+    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: null, draft: null, qOpen: false, pending: [], hideNR: true, hideNRFlash: false, libOpen: false, dom: null },
     issues: { cats: new Set(), q: '', by: 'type' },
   },
 };

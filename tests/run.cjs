@@ -447,6 +447,59 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     assert(scope.includes('search = ' + before) && scope.toLowerCase().includes('@risk-components-gateway = risks · affected component contains “gateway”'), 'About: ' + scope); eq(about.paths, risks.length, 'Paths rows = risks shown');
     eq(page.errors, [], 'script errors');
   });
+  await test('F23', 'Dominance: off by default; the crown (leftmost active column at start, one at a time) sets the point of view of the search; the other columns show only what the shown dominant objects link; off = as before', async () => {
+    await page.evaluate(() => { const u = window.__rre.state().state.ui.flow; u.cols = ['threat', 'risk', 'rmi', 'group']; u.focus = null; u.draft = null; u.dom = null; u.hideNR = true; });
+    await nav(page, 'overview'); await nav(page, 'connections'); await page.waitForTimeout(200);
+    const domState = () => page.evaluate(() => ({ dom: window.__rre.state().state.ui.flow.dom, pressed: document.getElementById('flow-dom').getAttribute('aria-pressed'),
+      crowns: [...document.querySelectorAll('.seg.multi button.crown')].map((b) => b.className.match(/t-(\w+)/)[1]), on: [...document.querySelectorAll('.seg.multi button.crown.on')].map((b) => b.className.match(/t-(\w+)/)[1]),
+      mark: [...document.querySelectorAll('.flow-col.dom')].map((c) => c.className.match(/t-(\w+)/)[1]) }));
+    eq(await domState(), { dom: null, pressed: 'false', crowns: [], on: [], mark: [] }, 'off by default: no crowns');
+    const off = await qCol('threat');
+    await page.click('#flow-dom'); await page.waitForTimeout(250);
+    eq(await domState(), { dom: 'threat', pressed: 'true', crowns: ['threat', 'risk', 'rmi', 'group'], on: ['threat'], mark: ['threat'] }, 'switched on: a crown on every active column, the leftmost one selected');
+    await page.click('.seg.multi button.crown.t-rmi'); await page.waitForTimeout(250);
+    const st = await domState(); eq([st.dom, st.on, st.mark], ['rmi', ['rmi'], ['rmi']], 'a click on a crown selects it and deselects the others');
+    const P = await page.evaluate(() => {
+      const { M } = window.__rre.state(), rel = M.risks.filter((r) => !r.notRelevant), ids = (l) => [...new Set(l.map((o) => o.id))].sort();
+      const g1 = M.groups.find((g) => g.id === 'RMG01'), g4 = M.groups.find((g) => g.id === 'RMG04');
+      const both = M.rmis.filter((m) => m.groups.includes(g1) && m.groups.includes(g4));
+      const rBoth = rel.filter((r) => r.groups.includes(g1) && r.groups.includes(g4)), upd = rel.find((r) => r.id === 'R.UPD.1' && r.items.some((i) => i.rmi.id === 'RMI-003') && r.items.some((i) => i.rmi.id === 'RMI-016'));
+      const in1 = M.rmis.filter((m) => m.groups.includes(g1)), r1 = rel.filter((r) => r.items.some((i) => in1.includes(i.rmi)));
+      const c1 = rel.filter((r) => r.groups.includes(g1)), comps1 = [...new Set(c1.flatMap((r) => r.components))];
+      const extra = rel.filter((r) => !r.groups.includes(g1) && r.components.some((c) => comps1.includes(c))); // risks of those components that RMG01 does not treat
+      const lone = M.assumptions.filter((a) => !a.risks.some((r) => !r.notRelevant)), withComp = ids(rel.filter((r) => r.components.length).flatMap((r) => r.assumptions));
+      return { both: both.length, rBoth: ids(rBoth), upd: !!upd, itemsBoth: ids(rBoth.flatMap((r) => r.items.map((i) => i.rmi)).filter((m) => m.groups.includes(g1) || m.groups.includes(g4))),
+        in1: ids(in1), r1: ids(r1), c1: ids(c1), comps1: comps1.map((c) => c.name).sort(), extra: extra.length, lone: ids(lone), withComp };
+    });
+    eq([P.both, P.upd, P.rBoth.length > 0, P.extra > 0, P.lone.length > 0], [0, true, true, true, true], 'fixture preconditions (no item in RMG01 and RMG04; R.UPD.1 treated by both through different items)');
+    await qApply('RMG01 AND RMG04');
+    assert(/No path satisfies the whole search/.test(await page.textContent('.flow-host')) && /Dominance is on/.test(await page.textContent('.flow-host')), 'crown on items: RMG01 AND RMG04 = an item in both groups = none');
+    await page.click('.seg.multi button.crown.t-risk'); await page.waitForTimeout(300);
+    eq([await qCol('risk'), await qCol('rmi'), await qCol('group')], [P.rBoth, P.itemsBoth, ['RMG01', 'RMG04']], 'crown on risks: risks treated by both groups (through any of their items), their items of the two groups, the two groups');
+    assert((await qCol('risk')).includes('R.UPD.1'), 'R.UPD.1 shown with the crown on risks');
+    await page.click('.seg.multi button.crown.t-rmi'); await page.waitForTimeout(250); await qApply('RMG01');
+    eq([await qCol('rmi'), await qCol('group'), await qCol('risk')], [P.in1, ['RMG01'], P.r1], 'crown on items, RMG01: the items of the group, the group, the risks of those items');
+    await qOpen(); await page.fill('#flow-q', 'RMG01 OR RMG04'); await page.waitForTimeout(250);
+    assert(/mitigation items \(dominant column\) match/.test(await page.textContent('#flow-q-status')), 'editor counts objects of the dominant column: ' + await page.textContent('#flow-q-status'));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    const exp = await page.evaluate(() => window.__rre.EXPORTS.connections.run().filter); assert(exp.includes('dominance = Mitigation items'), 'export states the dominance: ' + exp);
+    await allCols(); await page.click('.seg.multi button.crown.t-component'); await page.waitForTimeout(250);
+    eq([await qCol('component'), await qCol('risk')], [P.comps1, P.c1], 'crown on components, RMG01: the components and only the risks on the paths (treated by RMG01)');
+    await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(250);
+    const asm = await qCol('assumption'); eq(asm, P.withComp, 'crown on components, no search: only assumptions linked to a component through a visible risk'); assert(!P.lone.some((a) => asm.includes(a)), 'an assumption without visible risks is shown');
+    await page.click('.seg.multi button:has-text("Components")'); await page.waitForTimeout(250);
+    eq((await domState()).on, ['assumption'], 'switching off the dominant column moves the crown to the leftmost active column');
+    await page.click('#flow-dom'); await page.waitForTimeout(250);
+    eq((await domState()).crowns, [], 'switched off: no crowns');
+    const back = await qCol('assumption'); assert(P.lone.every((a) => back.includes(a)), 'off: assumptions without risks shown again, as before');
+    await qApply('RMG01 AND RMG04'); eq(await qCol('risk'), P.rBoth, 'off: RMG01 AND RMG04 = risks treated by both, as before');
+    await page.click('.focusbar .btn:has-text("Show everything")'); await page.evaluate(() => { window.__rre.state().state.ui.flow.cols = ['threat', 'risk', 'rmi', 'group']; }); await nav(page, 'overview'); await nav(page, 'connections');
+    eq(await qCol('threat'), off, 'off: threats column as before');
+    const q = await page.evaluate(() => { const { M } = window.__rre.state(), Q = window.__rre.Q, rel = M.risks.filter((r) => !r.notRelevant), ev = (s, d) => Q.evalFocus(Q.qParse(s).ast, rel, d).hits.length;
+      return [ev('RMI-003 AND RMI-016', 'rmi'), ev('RMI-003 AND RMI-016', 'risk') === rel.filter((r) => ['RMI-003', 'RMI-016'].every((id) => r.items.some((i) => i.rmi.id === id))).length, ev('RMI-003 OR RMI-016', 'rmi')]; });
+    eq(q, [0, true, 2], 'AND of two objects of the dominant column never holds; OR = both');
+    eq(page.errors, [], 'script errors');
+  });
   await test('F6', 'Invalid files give a clear message and leave the tool usable', async () => {
     for (const [f, rx] of [['not-a-workbook.xlsx', /not an Excel/], ['encrypted.xlsx', /encrypted|legacy/], ['other-workbook.xlsx', /no risk analysis sheet/]]) { await page.goto(FILE_T); await page.setInputFiles('#file-input', fx(f)); await page.waitForSelector('.toast.error', { timeout: 5000 }); assert(rx.test(await page.locator('.toast.error').first().textContent()), 'message for ' + f); }
     await load(page, FILE_T, fx('sample.xlsx')); eq(page.errors, [], 'script errors');
