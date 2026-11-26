@@ -37,6 +37,7 @@ change needs. Sections are self-contained; cross-references are given as `§n`.
 | New view or change a view | §8, §9, recipe 18.4 |
 | Matrix, colors, thresholds, scale values | §7, §9 |
 | Connections view (focus, hover, clicks) | §9.8 |
+| Connections search (logical search, content filters, library) | §9.8, §9.11, §14, recipe 18.6 |
 | Baselines, logs, History | §10, §12 |
 | Export | §13 |
 | Workbook does not open / wrong values | §5, §4 |
@@ -69,8 +70,10 @@ src/js/02-xlsx.js          minimal read-only XLSX/ZIP reader
 src/js/03-config.js        scales, bands, categories, BSI threat catalogue, issue catalogue
 src/js/04-model.js         buildModel(): sheets -> linked objects + all checks
 src/js/05-ui-core.js       shared UI: chips, pills, badges, object cards, detail renderers, side panel, filters
+src/js/05q-query.js        search language of Connections: expression trees, parser/printer, content filters, library, evaluation
 src/js/06-views-a.js       views: overview, risk matrix, risks, threats
 src/js/07-views-b.js       views: mitigations, assumptions, components, connections, issues
+src/js/07c-search.js       search UI of Connections: search field + autocomplete, focus bar, library panel, filter builder
 src/js/07w-write.js        write mode: guarded disk writes, baselines, change logs, snapshot/diff
 src/js/07x-history.js      History view and per-object change history
 src/js/07y-export.js       Export to Excel (own XLSX writer)
@@ -87,7 +90,7 @@ dist/                      built single file (committed for users)
 - `node build.mjs` reads every `src/js/*.js` **in alphabetical order**, concatenates them into one
   `(() => { "use strict"; … })()` and inlines it with `styles.css` into `index.template.html`.
   Consequences: all files share one scope (top-level `const`/`function` are visible to later files); **the file name
-  decides load order** (`07-views-b` < `07w` < `07x` < `07y` < `07z` < `08`). Top-level code that runs immediately
+  decides load order** (`05-ui-core` < `05q-query` < `06`, `07-views-b` < `07c-search` < `07w` < `07x` < `07y` < `07z` < `08`). Top-level code that runs immediately
   may only use what earlier files defined; functions may reference later files because they run after start-up.
 - Before the app, `build.mjs` inlines **`src/vendor/*.js`** (alphabetical, classic-script scope, each ends with `;`;
   `</script` is escaped) and **`src/vendor/*.css`**. Vendor scripts run first and expose their API on `globalThis`;
@@ -97,7 +100,8 @@ dist/                      built single file (committed for users)
   Never add `unsafe-inline`, external URLs or `<link href>` other than `data:` (test S3).
 - The icon is embedded as `data:` URIs (`assets/icon.svg`, `icon-32.png`, `icon-256.png`).
 - `node build.mjs --test` writes `dist/risk-register-explorer.test.html` that additionally exposes
-  `window.__rre = { state(), write, hist, safeWrite, snapshot, diffSnapshots, EXPORTS, edit }`. It is used only by
+  `window.__rre = { state(), write, hist, safeWrite, snapshot, diffSnapshots, EXPORTS, edit, Q }` (`Q` = parser, printer,
+  evaluation and library of the search, §9.11). It is used only by
   tests, deleted after the run, and git-ignored. The shipped file has no hook.
 - Start-up (`08-main.js`, last lines): `initTheme()`, `initTooltip()`, `initFileHandling()`, `renderApp()`.
 
@@ -198,7 +202,9 @@ Change values here, never hard-code them in views. Issue codes are referenced by
   (`textContent`), never HTML strings (§14). `svg()` for SVG, `icon(name)` from the `ICONS` path table.
   Use `add()/fill()` helpers (they flatten arrays and skip null) instead of `el.append()` with arrays.
 - **State**: global `M` (model) and `state` (`file, handle, hash, view, drawer stack, expanded cards, ui.<view>
-  filters`). Views keep their filter state in `state.ui.<view>` so it survives navigation.
+  filters`). Views keep their filter state in `state.ui.<view>` so it survives navigation. The Connections search is
+  `state.ui.flow.focus` (an expression tree or null, §9.11); the library of content filters and saved searches is the
+  global `searchLib` (in memory only).
 - **Routing**: `location.hash` `#/<view>` → `showView()` renders `VIEWS[key]()` into `<main>`, then appends the
   view’s **Add** button (§11) and **Export** button (§13) to the view header.
 - **Side panel** (`openObj(o)`, `renderDrawer`): stack with back button; content from `DETAIL[type]`; plus Edit
@@ -214,17 +220,59 @@ Each `VIEWS.<key>` returns a fresh element; heavy views redraw only their body o
 3. **risks** – filterable, groupable list of risk cards. 4. **threats** – 47-tile BSI coverage + threat cards.
 5. **mitigations** – groups (reach bars, cards) and all items. 6. **assumptions**. 7. **components** – heat map.
 8. **connections** – columns of object types, links derived through risks, SVG curves.
-   Focus = list of **terms** (`state.ui.flow.focus: Object[][]`): objects inside a term are OR (Ctrl/Cmd+click
-   batch, applied on key release), terms are AND (plain click). Hover highlights only objects linked through the
-   hovered object’s own risks. Single click is delayed 280 ms; a double click (also a slow one on the same spot within
-   650 ms) opens details and never changes the focus (`clickTimer`, `lastClick`, `flowUndo`).
+   Focus = the **search**, an expression tree (`state.ui.flow.focus`, §9.11). A plain click adds the object with AND;
+   a Ctrl/Cmd+click batch (applied on key release) adds one OR term per object type. The search can also be typed
+   (search field with autocompletion) and combined with content filters and saved searches (§9.11). Every change goes
+   through `setFocus(expr, {cols, refocus})` inside the view. Hover highlights only objects linked through the
+   hovered object’s own risks (as far as the search shows them for each risk). Single click is delayed 280 ms; a double
+   click (also a slow one on the same spot within 650 ms) opens details and never changes the focus (`clickTimer`,
+   `lastClick`, `flowUndo`).
 9. **history** (§12). 10. **issues** – findings grouped by check / object / sheet & row.
+11. **Search in Connections** (`05q-query.js` logic, `07c-search.js` UI).
+   - *Expression tree* (immutable): `{k:'obj', o}` | `{k:'ref', name}` (library entry, written `@name`) | `{k:'not', a}` |
+     `{k:'and'|'or', c:[…]}`; `exprSimplify` flattens same-operator children, drops single-child nodes and double NOT.
+   - *Language* (`qParse` / `exprToText`): IDs or component names (quoted when they have spaces; an unquoted run of
+     words that is a known name is accepted), `AND`/`&`, `OR`/`|`, `NOT`/`!`, brackets, `@name`, `type:ID` only when two
+     types share an ID. **AND binds before OR.** Errors carry the position (`{msg, s, e}`) and a “did you mean”.
+   - *Semantics* (`evalFocus`): the view is built from **anchors** = every visible risk with the objects it links, plus
+     objects no visible risk links (unused items with their groups, empty groups, components/assumptions without
+     visible risks) — without a search the anchors are exactly what the view showed before. Every term asks whether an
+     anchor is linked to the object (a content filter: to any object it finds); AND / OR / NOT combine the answers per
+     anchor, so `A AND B` (same type) = risks linked to both. For display the search is put in disjunctive normal form
+     (`qDnf`, at most 512 conjunctions, otherwise no column restriction): for every satisfied conjunction each column
+     keeps only the objects the conjunction names positively (`qRestrict`; groups narrow the items to those in the
+     groups, the groups column follows the items shown). Edges are drawn per conjunction, weight = number of risks.
+   - *Focus bar* (`flowFocusBar`): the tree as chips; every “and” / “or” is a button that flips **that** operator and
+     regroups the node with AND before OR (`exprToggleOp`: “A and B and C” → “(A and B) or C”); nested nodes are drawn
+     as bracketed boxes; ¬ negates a chip, the red “not” removes the negation, × removes the chip.
+   - *Layout*: the view header holds, on the right from top to bottom, Export to Excel, “Hide not relevant”, “Content
+     filter” + “Filters & saved searches” (`flowToolButtons`) and the **compact search box** (`flowSearchMini`); the
+     Columns selector sits under the description. The box shows the current search as one line of text — also when it
+     was built by clicks — cut with “…” when it does not fit (full text in its tooltip).
+   - *Search editor* (`flowSearchRow`, open while `ui.qOpen`): a click on the box opens the large editor **below the
+     “Focused on” bar**, focused with the caret at the end. Live validation (“reads as …”, number of matching risks);
+     suggestions for the word at the caret (objects by ID/name, then by title; `@` lists the library; AND/OR/NOT where
+     they fit); ↑ ↓ Enter/Tab; Enter applies and closes it; applying switches on the columns of the types the search asks
+     for (`exprTypes`). Esc or × closes it without applying; leaving it closes it unless it holds unapplied text
+     (`ui.draft`).
+   - *Content filters* (`FILTER_FIELDS`, `filterMatcher`, `filterSet`): one condition on one attribute of one object
+     type — contains / does not contain a word or phrase (case-insensitive, optional whole word) / is empty / is not empty.
+     Every type has “Any attribute” (own attributes, not links) and **Errors** / **Warnings** (title, message, cell text and
+     check code of its findings). Built by clicks in `filterDialog`: object type tiles → generic card of the type (every
+     attribute with an example value and how many objects have one) → condition with a live preview (count + snippets).
+   - *Library* (`searchLib.items`: filters and saved searches, unique names, `@name`): in memory while the tab is open
+     (kept when a workbook is reloaded or another one is opened); **Download library** = JSON file via a `blob:` download,
+     **Load library…** = a file input, every entry validated (`libItemFrom`), same name = replaced. Renaming a filter
+     rewrites `@old` in saved searches and in the focus (`qRenameRef`); a filter used by a saved search cannot be
+     deleted; a saved search cannot refer to itself (checked when saving and when evaluating).
+   - After reading a workbook again the focus is remapped by type and ID (`exprRemap`); missing objects are dropped.
 
 **Hide removed** (`removedToggle`, `state.ui.mit.hideRemoved`, on by default) exists only in the Mitigations items tab:
 it is the only place where removed items can appear (with its own search). Everywhere else they are absent because
 views read `M.rmis`.
 
-**Hide not relevant** (`nrToggle` in a `.nr-slot`, always the last control of the view, aligned right; state
+**Hide not relevant** (`nrToggle` in a `.nr-slot`, always the last control of the view, aligned right — in Connections
+it is in the view header above the search tools; state
 `state.ui.<view>.hideNR…`, on at start, kept while the tab is open): one
 independent toggle in Risks (`risks.hideNR`), Threats (`threats.hideNR`, list only), Mitigations (`mit.hideNRg` groups
 tab, `mit.hideNRi` items tab) and Connections (`flow.hideNR`: hides not-relevant risks and threats with only such risks;
@@ -305,6 +353,7 @@ a minimal valid XLSX (inline strings, styles for header and Low/Medium/High fill
 `zipFiles` stores it (CRC-32, no compression). Downloaded via a `blob:` link with `download` — no file-system API, so
 it cannot touch the workbook or the repository folder. Every export adds an “About” sheet (source, time, filter).
 Exports respect the current filters/focus of the view, including its “Hide not relevant” toggle (stated in “About”).
+The Connections export states the search as text and the definition of every `@name` it uses.
 
 ## 14. Security and privacy
 
@@ -312,7 +361,9 @@ Exports respect the current filters/focus of the view, including its “Hide not
   the network because of the CSP; review it before adding (recipe 18.5). No `innerHTML`, `eval`, `new Function` (S1); cell text
   is rendered as text (test S5 with injection fixture).
 - Disk writes only via §10 guards; no delete API anywhere (`removeEntry` forbidden by S1).
-- `localStorage` holds only the theme preference.
+- `localStorage` holds only the theme preference. The search library (§9.11) lives in memory; it leaves the tab only as a
+  download chosen by the user (`blob:` link, like the export) and comes back only through a file input; loaded entries
+  are validated field by field and every text is rendered with `h()` (tests F20–F21).
 - Real workbooks, baselines and logs must never be committed (`.gitignore`); all fixtures are fictional.
 
 ## 15. Testing
@@ -349,6 +400,9 @@ Write tests use the browser’s private file system (OPFS) and shimmed pickers �
 | D18 | “Threat relevance” is a risk attribute; not relevant = the words “not relevant” anywhere; “Hide not relevant” per view, on by default; threats/groups/items hidden only when all their risks are not relevant; unused objects never hidden; empty or look-alike values = warning, counted as relevant | Owner decisions (2026-11). Never hide something on a guess; never hide a gap of the analysis. |
 | D19 | “Removed” column: removed items hidden everywhere except the items tab (“Hide removed”, on by default); links to them are errors and ignored; no usage/text checks for them; invalid values = format error, treated as active | Owner decisions (2026-11). One switch (`M.rmis` = active) so no view can forget to hide them. |
 | D20 | Workbook editing deprecated: UI disabled, code kept, still covered by the E tests via the test hook | Owner: editing will be rebuilt later; keeping the tested code avoids losing the safe-write pipeline. |
+| D21 | Connections search = expression tree over objects and `@` library entries; each term is a question about an anchor (risk-level: “linked to X?”); columns restricted per DNF conjunction to the objects named positively; AND binds before OR; clicking one operator flips only it and regroups | Owner request (2026-11): switch and/or in the focus bar, write own logical expressions with ID autocompletion. Risk-level terms keep the click behaviour (`A AND B` = risks linked to both, also for two objects of one type) and make NOT intuitive (“risks without this item”). |
+| D22 | Content filter = one condition (contains / does not contain / is empty / is not empty) on one attribute of one object type, errors and warnings included; filters and saved searches combine through the same logic language | Owner request (2026-11), built by clicks (object → generic card → attribute). One condition per filter keeps each filter readable; combinations are expressed — and saved — as searches. |
+| D23 | Library of filters and searches kept in memory; kept between sessions only as a downloaded JSON file loaded again by the user; nothing in `localStorage` | “Stays in memory” promise and §14: filter words can contain workbook content; `file://` pages share one storage origin. Can be changed by the owner (then update §14 and test S4). |
 
 ## 17. Known limitations and open points
 
@@ -361,6 +415,10 @@ Write tests use the browser’s private file system (OPFS) and shimmed pickers �
 - Look-alike headers (a new column starting with “Frequency”, “Effects”, “Risk index”, “Comment”…) placed left of the
   original can be picked instead; header detection takes the first match.
 - Write mode and History folder access need Chromium (File System Access API).
+- Search: a saved search refers to objects by ID, so in another workbook it may not resolve (shown as “cannot be used
+  here”); a search with more than 512 conjunctions in normal form is still evaluated exactly but its columns are not
+  restricted; duplicate IDs (C_DUP_ID) are written in a search as their first object; the library is lost when the tab
+  is closed unless it was downloaded.
 - Not tested against real Microsoft Excel files in CI (LibreOffice/openpyxl only); Excel-written fixture is simulated.
 
 ## 18. Recipes
@@ -389,6 +447,12 @@ as `src/vendor/<name>-<version>.js` (and `.css`) with its license header → add
 license, SHA-256) to `src/vendor/README.md` (test S6 fails otherwise) → use the global from app code → make sure it
 does not fetch anything, write to disk or inject workbook text as HTML → `node build.mjs && node tests/run.cjs` and
 check the size of `dist/`. Add a decision to §16 if it replaces own code.
+
+**18.6 Make an attribute searchable by content filters / extend the search.** Add `{ key, label, from, get(o) }` to
+`FILTER_FIELDS[type]` in `05q-query.js` (`get` returns a text or a list of texts; `rel: true` for values derived from
+links, which “Any attribute” leaves out) — the generic card, preview, matching and library validation pick it up. A new
+operator of the language goes into `qTokens` / `qParse` / `exprToText` and needs an F16 case; a new filter condition into
+`FILTER_OPS` / `filterMatcher` and an F20 case. Never render a value with anything but `h()`.
 
 **After any change:** `node build.mjs && node tests/run.cjs`, keep `README.md`, this document and
 `tests/TEST_PLAN.md` in sync.

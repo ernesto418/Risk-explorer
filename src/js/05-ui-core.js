@@ -23,7 +23,8 @@ const state = {
     mit: { tab: 'groups', q: '', only: 'all', hideNRg: true, hideNRi: true, hideRemoved: true },
     asm: { q: '' },
     comp: { when: 'before' },
-    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: [], pending: [], hideNR: true, hideNRFlash: false },
+    /* focus: the search, an expression tree (05q-query.js) or null; draft: unapplied text of the search editor; qOpen: editor open; libOpen: library panel */
+    flow: { cols: ['threat', 'risk', 'rmi', 'group'], focus: null, draft: null, qOpen: false, pending: [], hideNR: true, hideNRFlash: false, libOpen: false },
     issues: { cats: new Set(), q: '', by: 'type' },
   },
 };
@@ -375,7 +376,7 @@ function renderDrawer(focus) {
   if (top.obj) {
     const o = top.obj, t = TYPES[o.type];
     head = h('header.dr-head.t-' + o.type, back, h('span.obj-ico', icon(t.icon, 16)), h('div.dr-title', h('span.dr-type', t.label), h('span.dr-id', objLabel(o))),
-      issueBadges(o.issues), h('button.btn.ghost.sm', { type: 'button', tip: 'Show this object and everything linked to it in the Connections view', onclick: () => { state.ui.flow.focus = [[o]]; state.ui.flow.pending = [];
+      issueBadges(o.issues), h('button.btn.ghost.sm', { type: 'button', tip: 'Show this object and everything linked to it in the Connections view', onclick: () => { state.ui.flow.focus = QX.obj(o); state.ui.flow.draft = null; state.ui.flow.pending = [];
         if (state.ui.flow.hideNR && onlyNotRelevant(o)) { state.ui.flow.hideNR = false; state.ui.flow.hideNRFlash = true; } /* would be hidden: show it and highlight the toggle */
         if (!state.ui.flow.cols.includes(o.type)) state.ui.flow.cols = FLOW_ORDER.filter((x) => state.ui.flow.cols.includes(x) || x === o.type); closeDrawer(); go('connections', true); } }, icon('flow', 13), 'Connections'), editButtons(o), close);
     body = detailBody(o, {});

@@ -12,7 +12,7 @@ const sha = (s) => 'sha256-' + createHash('sha256').update(s, 'utf8').digest('ba
 const jsFiles = readdirSync(join(root, 'src/js')).filter((f) => f.endsWith('.js')).sort();
 // `node build.mjs --test` writes a second file with a small inspection hook for automated tests.
 const test = process.argv.includes('--test');
-const hook = test ? '\nwindow.__rre = { state: () => ({ M, state }), write, hist, safeWrite, EXPORTS, edit, snapshot, diffSnapshots };\n' : '';
+const hook = test ? '\nwindow.__rre = { state: () => ({ M, state }), write, hist, safeWrite, EXPORTS, edit, snapshot, diffSnapshots,\n  Q: { qParse, exprToText, evalFocus, exprToggleOp, exprAdd, exprAtoms, filterSet, filterMatcher, fieldList, fieldValues, searchLib, libItemFrom, QX } };\n' : '';
 // Third-party code (optional): src/vendor/*.js and *.css are inlined BEFORE the app, so the output stays one offline file.
 // Vendor scripts run as classic scripts (UMD/IIFE builds put their API on globalThis); '</script' inside them is escaped.
 const vdir = join(root, 'src/vendor');

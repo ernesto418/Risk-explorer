@@ -39,12 +39,14 @@ function themeButton() {
 }
 
 /* ---- dialogs & toasts ---------------------------------------------------------------------- */
+/** wide: true = wide dialog, or a class name ('xwide'). Returns the dialog element. */
 function openDialog(title, content, wide) {
-  const d = h('dialog.dialog' + (wide ? '.wide' : ''), h('header', h('h2', title), h('button.icon-btn', { type: 'button', tip: 'Close', onclick: () => d.close() }, icon('close', 15))), h('div.dialog-b', content));
+  const d = h('dialog.dialog' + (wide ? (wide === true ? '.wide' : '.' + wide) : ''), h('header', h('h2', title), h('button.icon-btn', { type: 'button', tip: 'Close', onclick: () => d.close() }, icon('close', 15))), h('div.dialog-b', content));
   d.addEventListener('close', () => d.remove());
   d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
   document.body.append(d);
   d.showModal();
+  return d;
 }
 function toast(msg, kind) {
   let host = document.getElementById('toasts');
@@ -63,11 +65,11 @@ async function loadFile(file, handle) {
     const buf = await file.arrayBuffer();
     const wb = await readWorkbook(buf);
     state.hash = await sha256(buf);
-    const prevFocus = state.ui.flow.focus || [];
+    const prevFocus = state.ui.flow.focus;
     M = buildModel(wb, { name: file.name, size: file.size, lastModified: file.lastModified, loadedAt: Date.now() });
     state.file = file; state.handle = handle || null; state.drawer = []; state.changed = false;
-    state.ui.flow.focus = prevFocus.map((term) => term.map((p) => (M.by[p.type] ? M.by[p.type].get(p.key || p.id) : null)).filter(Boolean)).filter((term) => term.length);
-    state.ui.flow.pending = [];
+    state.ui.flow.focus = exprRemap(prevFocus); // the same objects (by type and ID) in the workbook just read; missing ones are dropped
+    state.ui.flow.draft = null; state.ui.flow.pending = [];
     buildSearchIndex();
     renderApp();
     if (!M.sheetNames.risk) toast('The workbook was opened, but no risk analysis sheet was recognised. See “Errors & warnings”.', 'error');

@@ -130,15 +130,15 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     await page.hover('.fnode.t-component:has-text("Edge Gateway")'); await page.waitForTimeout(150);
     const hov = await page.evaluate(() => { const { M } = window.__rre.state(); const exp = M.by.component.get('Edge Gateway').risks.filter((r) => !r.notRelevant).map((r) => r.id).sort(); /* “Hide not relevant” is on by default */ return { hl: [...document.querySelectorAll('.fnode.hl.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp }; }); eq(hov.hl, hov.exp, 'highlighted risks');
     await page.click('.fnode.t-component:has-text("Edge Gateway")'); await page.waitForTimeout(500); await page.click('.fnode.t-threat >> nth=1'); await page.waitForTimeout(500);
-    const foc = await page.evaluate(() => { const { M, state } = window.__rre.state(); let exp = M.risks.filter((r) => !r.notRelevant); for (const term of state.ui.flow.focus) exp = exp.filter((r) => term.some((o) => o.risks.includes(r))); return { n: state.ui.flow.focus.flat().length, shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp: exp.map((r) => r.id).sort() }; }); eq([foc.n, foc.shown], [2, foc.exp], 'multi-focus risks');
+    const foc = await page.evaluate(() => { const { M, state } = window.__rre.state(), f = state.ui.flow.focus, objs = window.__rre.Q.exprAtoms(f).map((x) => x.n.o); const exp = M.risks.filter((r) => !r.notRelevant && objs.every((o) => o.risks.includes(r))); /* two plain clicks = A AND B */ return { k: f.k, n: objs.length, shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp: exp.map((r) => r.id).sort() }; }); eq([foc.k, foc.n, foc.shown], ['and', 2, foc.exp], 'multi-focus risks');
   });
   await test('F7', 'Connections: Ctrl+click collects several threats, applied together on Ctrl release as OR', async () => {
     await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(200);
     await page.keyboard.down('Control'); await page.click('.fnode.t-threat >> nth=0'); await page.click('.fnode.t-threat >> nth=1'); await page.waitForTimeout(150);
-    const before = await page.evaluate(() => { const { state } = window.__rre.state(); return [state.ui.flow.focus.length, state.ui.flow.pending.length, !!document.getElementById('flow-pending')]; });
-    eq(before, [0, 2, true], 'focus terms / pending / pending bar before Ctrl release');
+    const before = await page.evaluate(() => { const { state } = window.__rre.state(); return [state.ui.flow.focus, state.ui.flow.pending.length, !!document.getElementById('flow-pending')]; });
+    eq(before, [null, 2, true], 'focus / pending / pending bar before Ctrl release');
     await page.keyboard.up('Control'); await page.waitForTimeout(250);
-    const r = await page.evaluate(() => { const { M, state } = window.__rre.state(); const term = state.ui.flow.focus[0] || []; return { terms: state.ui.flow.focus.length, size: term.length, pending: state.ui.flow.pending.length,
+    const r = await page.evaluate(() => { const { M, state } = window.__rre.state(), f = state.ui.flow.focus, term = f && f.k === 'or' ? f.c.map((x) => x.o) : []; return { terms: f && f.k === 'or' ? 1 : 0, size: term.length, pending: state.ui.flow.pending.length,
       shown: [...document.querySelectorAll('.fnode.t-risk .fnode-id')].map((x) => x.textContent).sort(), exp: M.risks.filter((x) => term.includes(x.threat) && !x.notRelevant).map((x) => x.id).sort(), threats: document.querySelectorAll('.fnode.t-threat').length }; });
     eq([r.terms, r.size, r.pending, r.threats], [1, 2, 0, 2], 'terms / objects in term / pending / threats shown'); eq(r.shown, r.exp, 'risks = union of both threats'); assert(r.exp.length > 0, 'no risks');
     await page.click('.fnode.t-component >> nth=0').catch(() => {}); await page.waitForTimeout(500);
@@ -147,14 +147,14 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     await page.click('.focusbar .btn:has-text("Show everything")').catch(() => {}); await page.waitForTimeout(200);
     const id = await page.locator('.fnode.t-threat >> nth=2 >> .fnode-id').textContent();
     await page.dblclick('.fnode.t-threat >> nth=2'); await page.waitForTimeout(500);
-    const r = await page.evaluate(() => ({ focus: window.__rre.state().state.ui.flow.focus.length, drawer: (document.querySelector('.drawer .dr-id') || {}).textContent }));
+    const r = await page.evaluate(() => ({ focus: window.__rre.Q.exprAtoms(window.__rre.state().state.ui.flow.focus).length, drawer: (document.querySelector('.drawer .dr-id') || {}).textContent }));
     eq([r.focus, r.drawer], [0, id], 'focus terms / opened object'); await page.keyboard.press('Escape');
     const bb = await page.locator('.fnode.t-threat >> nth=2').boundingBox(); const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
     await page.mouse.click(cx, cy); await page.waitForTimeout(400); await page.mouse.click(cx, cy); await page.waitForTimeout(400);
-    const slow = await page.evaluate(() => ({ focus: window.__rre.state().state.ui.flow.focus.length, drawer: (document.querySelector('.drawer .dr-id') || {}).textContent }));
+    const slow = await page.evaluate(() => ({ focus: window.__rre.Q.exprAtoms(window.__rre.state().state.ui.flow.focus).length, drawer: (document.querySelector('.drawer .dr-id') || {}).textContent }));
     eq([slow.focus, slow.drawer], [0, id], 'slow double click: focus terms / opened object'); await page.keyboard.press('Escape'); await page.waitForTimeout(700);
     await page.click('.fnode.t-threat >> nth=2'); await page.waitForTimeout(500);
-    eq(await page.evaluate(() => [window.__rre.state().state.ui.flow.focus.length, !!document.querySelector('.drawer')]), [1, false], 'single click still focuses');
+    eq(await page.evaluate(() => [window.__rre.Q.exprAtoms(window.__rre.state().state.ui.flow.focus).length, !!document.querySelector('.drawer')]), [1, false], 'single click still focuses');
   });
   await test('X1', 'Export to Excel: every module downloads a valid .xlsx; no disk write through the file-system API', async () => {
     await load(page, FILE_T, fx('sample.xlsx'));
@@ -278,6 +278,173 @@ const load = async (page, url, file) => { await page.goto(url); await page.setIn
     const on = await ids(); assert(!on.some((t) => r.ids.some((id) => t.includes(id))), 'removed items shown with “Hide removed” on');
     await page.click('#rm-hideRemoved'); await page.waitForTimeout(200); eq((await ids()).length, on.length + r.ids.length, 'items with “Hide removed” off');
     await page.fill('.view .controls .searchbox input', r.linkedId); await page.waitForTimeout(400); eq((await ids()).filter((t) => t.includes(r.linkedId)).length, 1, 'items search finds the removed item');
+    eq(page.errors, [], 'script errors');
+  });
+  /* ---------- search in Connections: logical search, focus bar, content filters, library ---------- */
+  const ALL_COLS = ['component', 'assumption', 'threat', 'risk', 'rmi', 'group'];
+  const qFocus = () => page.evaluate(() => window.__rre.Q.exprToText(window.__rre.state().state.ui.flow.focus));
+  const qOpen = async () => { if (!(await page.locator('#flow-q').count())) await page.click('#flow-q-mini'); };
+  const qApply = async (text) => { await qOpen(); await page.fill('#flow-q', text); await page.click('#flow-q-apply'); await page.waitForTimeout(250); };
+  const qMini = () => page.textContent('#flow-q-mini .qmini-t');
+  const qCol = (t) => page.evaluate((x) => [...document.querySelectorAll('.fnode.t-' + x + ' .fnode-id')].map((e) => e.textContent).sort(), t);
+  const allCols = async () => { await page.evaluate((c) => { window.__rre.state().state.ui.flow.cols = c.slice(); }, ALL_COLS); await nav(page, 'overview'); await nav(page, 'connections'); await page.waitForTimeout(200); };
+  await test('F16', 'Logical search: parser, precedence (AND before OR), printer, operator switch and error messages with position', async () => {
+    await load(page, FILE_T, fx('sample.xlsx'));
+    const r = await page.evaluate(() => {
+      const { Q } = window.__rre, { M } = window.__rre.state();
+      const T = (s) => { const x = Q.qParse(s); return x.err ? 'ERR ' + x.err.msg : Q.exprToText(x.ast); };
+      const three = Q.qParse('T.BSI.15 AND T.BSI.43 AND RMI-008').ast, t1 = Q.exprToggleOp(three, [], 2), t2 = Q.exprToggleOp(t1, [], 1), t3 = Q.exprToggleOp(Q.qParse('T.BSI.15 OR T.BSI.43 OR RMI-008').ast, [], 2);
+      const p = Q.qParse('T.BSI.15 AND XYZ').err;
+      return { prec: T('T.BSI.15 or T.BSI.43 and not RMI-008'), sym: T('(t.bsi.15 | T.BSI.43) & !rmi-008'), round: T(T('T.BSI.15 or T.BSI.43 and not RMI-008')),
+        name: T('Edge Gateway AND T.BSI.15'), quoted: T('"edge gateway"'), typed: T('rmi:RMI-008'), dneg: T('NOT NOT T.BSI.15'), empty: Q.qParse('   ').ast,
+        toggles: [t1, t2, t3].map((x) => Q.exprToText(x)),
+        errs: ['T.BSI.15 T.BSI.43', 'T.BSI.15 AND', '(T.BSI.15', 'T.BSI.15)', 'RMI-0O8', '"Edge', '@nope', 'group:RMI-008', '()', 'AND T.BSI.15', M.allRmis.find((m) => m.removed).id].map(T),
+        pos: [p.s, p.e] }; });
+    eq([r.prec, r.sym, r.round, r.name, r.quoted, r.typed, r.dneg, r.empty], ['T.BSI.15 OR (T.BSI.43 AND NOT RMI-008)', '(T.BSI.15 OR T.BSI.43) AND NOT RMI-008', 'T.BSI.15 OR (T.BSI.43 AND NOT RMI-008)',
+      '"Edge Gateway" AND T.BSI.15', '"Edge Gateway"', 'RMI-008', 'T.BSI.15', null], 'parse → print');
+    eq(r.toggles, ['(T.BSI.15 AND T.BSI.43) OR RMI-008', 'T.BSI.15 AND T.BSI.43 AND RMI-008', 'T.BSI.15 OR (T.BSI.43 AND RMI-008)'], 'switching one operator regroups with AND before OR');
+    const want = [/^ERR Write AND or OR between “T\.BSI\.15” and “T\.BSI\.43”/, /^ERR The search ends too early/, /^ERR Missing “\)”/, /^ERR Unexpected “\)”/, /^ERR Unknown ID or name “RMI-0O8”\. Did you mean RMI-0\d8\?/,
+      /^ERR Missing closing quote/, /^ERR There is no content filter or saved search called @nope/, /^ERR Unknown ID or name “RMI-008” among the mitigation groups/, /^ERR Empty brackets/, /^ERR Expected an ID, a name or @filter before “AND”/, /^ERR Unknown ID or name/];
+    r.errs.forEach((e, i) => assert(want[i].test(e), 'error message ' + i + ': ' + e)); eq(r.pos, [13, 16], 'position of the unknown ID');
+  });
+  await test('F17', 'Logical search: AND / OR / NOT select exactly the risks linked to the objects; each column keeps only the objects the search names', async () => {
+    await nav(page, 'connections'); await allCols();
+    const P = await page.evaluate(() => {
+      const { M } = window.__rre.state(), rel = M.risks.filter((r) => !r.notRelevant), ids = (l) => l.map((o) => o.id).sort();
+      const th = M.threats.filter((t) => t.risks.some((r) => !r.notRelevant)).sort((a, b) => b.risks.length - a.risks.length), t1 = th[0], t2 = th[1];
+      const m = t1.risks.filter((r) => !r.notRelevant).flatMap((r) => r.items.map((o) => o.rmi)).find((x) => x.risks.some((r) => r.threat !== t1) || true);
+      const pair = rel.find((r) => r.assumptions.length >= 2), a1 = pair.assumptions[0], a2 = pair.assumptions[1], c1 = rel.find((r) => r.threat !== t1).components[0];
+      const g = M.groups.find((x) => x.risks.some((r) => !r.notRelevant && r.threat === t1)), u = M.rmis.find((x) => x.base && !x.risks.length && x.groups.length);
+      const uses = (r, o) => r.items.some((i) => i.rmi === o);
+      return { t1: t1.id, t2: t2.id, m: m.id, a1: a1.id, a2: a2.id, c1: c1.name, g: g.id, u: u.id, uGroups: ids(u.groups), mGroups: ids(m.groups),
+        e1: ids(rel.filter((r) => r.threat === t1 || r.threat === t2)), e2: ids(rel.filter((r) => (r.threat === t1 || r.threat === t2) && !uses(r, m))),
+        e3: ids(rel.filter((r) => r.assumptions.includes(a1) && r.assumptions.includes(a2))), e3c: ids(rel.filter((r) => r.components.includes(c1) && r.threat !== t1)), e4: ids(rel.filter((r) => r.threat !== t1)), e5: ids(rel.filter((r) => uses(r, m))),
+        e6: ids(rel.filter((r) => r.threat === t1 && r.groups.includes(g))), e6items: ids(uniqA(rel.filter((r) => r.threat === t1 && r.groups.includes(g)).flatMap((r) => r.items.map((o) => o.rmi)).filter((x) => x.groups.includes(g)))) };
+      function uniqA(a) { return [...new Set(a)]; }
+    });
+    const q = (s) => s.replace(/\bc1\b/g, (x) => '"' + P[x] + '"').replace(/\b(t1|t2|a1|a2|m|g|u)\b/g, (x) => P[x]);
+    await qApply(q('t1 OR t2')); eq([await qCol('risk'), await qCol('threat')], [P.e1, [P.t1, P.t2].sort()], 't1 OR t2: risks / threats');
+    await qApply(q('(t1 OR t2) AND NOT m')); eq(await qCol('risk'), P.e2, '(t1 OR t2) AND NOT m: risks'); assert(!(await qCol('rmi')).includes(P.m), 'negated item shown');
+    await qApply(q('a1 AND a2')); eq([await qCol('risk'), await qCol('assumption')], [P.e3, [P.a1, P.a2].sort()], 'a1 AND a2: risks relying on both / assumptions column = the two');
+    await qApply(q('c1 AND NOT t1')); eq([await qCol('risk'), await qCol('component')], [P.e3c, [P.c1]], 'component AND NOT threat: risks / components column = the component');
+    await qApply(q('NOT t1')); eq(await qCol('risk'), P.e4, 'NOT t1: risks'); assert(!(await qCol('threat')).includes(P.t1), 'negated threat shown');
+    await qApply(q('m')); eq([await qCol('risk'), await qCol('rmi'), await qCol('group')], [P.e5, [P.m], P.mGroups], 'single item: its risks, itself, its groups');
+    await qApply(q('g AND t1')); eq([await qCol('risk'), await qCol('rmi'), await qCol('group')], [P.e6, P.e6items, [P.g]], 'group AND threat: risks / only the items of the group / the group');
+    await qApply(q('u')); eq([await qCol('risk'), await qCol('rmi'), await qCol('group')], [[], [P.u], P.uGroups], 'unused item: no risks, the item and its groups');
+    await qApply(q('t1 AND t2')); assert(/No path satisfies the whole search/.test(await page.textContent('.flow-host')), 'empty AND without explanation');
+    eq(page.errors, [], 'script errors');
+  });
+  await test('F18', 'Focus bar: a click on “and” / “or” switches that operator (brackets show the grouping), ¬ negates, “not” and × undo; the columns follow', async () => {
+    const th = await page.evaluate(() => window.__rre.state().M.threats.filter((t) => t.risks.some((r) => !r.notRelevant)).sort((a, b) => b.risks.length - a.risks.length).slice(0, 3).map((t) => t.id));
+    const risksOf = (ids, not) => page.evaluate(([a, n]) => window.__rre.state().M.risks.filter((r) => !r.notRelevant && (n ? !a.includes(r.threat && r.threat.id) : a.includes(r.threat && r.threat.id))).map((r) => r.id).sort(), [ids, !!not]);
+    await qApply(th[0] + ' AND ' + th[1]); eq(await page.locator('.focusbar button.focus-op.op-and').count(), 1, 'one AND in the bar');
+    await page.click('.focusbar button.focus-op.op-and'); await page.waitForTimeout(250);
+    eq([await qFocus(), await qCol('risk')], [th[0] + ' OR ' + th[1], await risksOf([th[0], th[1]])], 'AND switched to OR');
+    await page.click('.focusbar .focus-i:has(.chip-id:text-is("' + th[1] + '")) .focus-neg'); await page.waitForTimeout(250);
+    const notT1 = await page.evaluate((a) => window.__rre.state().M.risks.filter((r) => !r.notRelevant && (r.threat && r.threat.id === a[0] || !(r.threat && r.threat.id === a[1]))).map((r) => r.id).sort(), th);
+    eq([await qFocus(), await qCol('risk')], [th[0] + ' OR NOT ' + th[1], notT1], 'negated with ¬');
+    await page.click('.focusbar button.focus-op.op-not'); await page.waitForTimeout(250); eq(await qFocus(), th[0] + ' OR ' + th[1], 'NOT removed by a click on “not”');
+    await page.click('.focusbar .focus-i:has(.chip-id:text-is("' + th[1] + '")) .icon-btn:not(.focus-neg)'); await page.waitForTimeout(250); eq(await qFocus(), th[0], 'removed with ×');
+    await qApply(th.join(' AND ')); await page.click('.focusbar button.focus-op.op-and >> nth=1'); await page.waitForTimeout(250);
+    eq([await qFocus(), await page.locator('.focusbar .focus-term.multi').count(), await page.locator('.focusbar button.focus-op').allTextContents()], ['(' + th[0] + ' AND ' + th[1] + ') OR ' + th[2], 1, ['and', 'or']], 'second AND switched: (A and B) or C, shown with brackets');
+    eq(await qCol('risk'), await risksOf([th[2]]), 'risks of (A and B) or C');
+    await page.click('.focusbar button.focus-op.op-or'); await page.waitForTimeout(250); eq(await qFocus(), th.join(' AND '), 'and back');
+    await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(200); eq(await qFocus(), '', 'show everything');
+    eq(page.errors, [], 'script errors');
+  });
+  await test('F19', 'Search box: compact in the header with “…” when the search does not fit; a click opens the large editor below the focus bar; ID and name autocompletion, Enter applies and closes, errors are marked, Esc closes', async () => {
+    await page.evaluate(() => { window.__rre.state().state.ui.flow.cols = ['threat', 'risk', 'rmi', 'group']; }); await nav(page, 'overview'); await nav(page, 'connections');
+    const lay = await page.evaluate(() => { const y = (s) => document.querySelector(s).getBoundingClientRect().top, head = document.querySelector('.view-head');
+      return { inHead: ['#export-btn', '#nr-hideNR', '#flow-new-filter', '#flow-lib-btn', '#flow-q-mini'].every((s) => head.contains(document.querySelector(s))), order: y('#export-btn') < y('#nr-hideNR') && y('#nr-hideNR') < y('#flow-lib-btn') && y('#flow-lib-btn') < y('#flow-q-mini'), editor: !!document.getElementById('flow-q') }; });
+    eq(lay, { inHead: true, order: true, editor: false }, 'header: Export, Hide not relevant, filter buttons, compact search box (top to bottom); editor closed');
+    await page.keyboard.down('Control'); for (let i = 0; i < 7; i++) await page.click('.fnode.t-threat >> nth=' + i); await page.keyboard.up('Control'); await page.waitForTimeout(400);
+    const mini = await page.evaluate(() => { const t = document.querySelector('#flow-q-mini .qmini-t'); return { text: t.textContent, over: t.scrollWidth > t.clientWidth, ell: getComputedStyle(t).textOverflow, tip: document.getElementById('flow-q-mini').dataset.tip }; });
+    eq([mini.text, mini.over, mini.ell, mini.tip.startsWith(mini.text)], [await qFocus(), true, 'ellipsis', true], 'clicked search shown as text, cut with “…”, full text in the tooltip');
+    await page.click('#flow-q-mini'); await page.waitForTimeout(150);
+    const open = await page.evaluate(() => { const q = document.getElementById('flow-q'), bar = document.querySelector('.focusbar'), row = document.getElementById('flow-q-row');
+      return { focused: document.activeElement === q, below: !!(bar.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) && row.getBoundingClientRect().top > bar.getBoundingClientRect().bottom - 1, wider: row.getBoundingClientRect().width > 2 * document.getElementById('flow-q-mini').getBoundingClientRect().width, value: q.value.trim() }; });
+    eq(open, { focused: true, below: true, wider: true, value: mini.text }, 'click: large editor below the focus bar, focused, with the search');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150); eq(await page.locator('#flow-q').count(), 0, 'Esc closes the editor');
+    await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(150); eq(await qMini(), 'Logical search…', 'empty search: placeholder');
+    await page.click('#flow-q-mini'); await page.keyboard.type('rmi-00'); await page.waitForTimeout(150);
+    const sug = await page.locator('.qsug-i').allTextContents(); assert(sug.length >= 3 && sug.every((x) => /^RMI-00\d/.test(x)), 'suggestions for rmi-00: ' + sug.slice(0, 3));
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); await page.waitForTimeout(100);
+    const second = await page.locator('#flow-q').inputValue(); assert(/^RMI-00\d $/.test(second) && second.trim() === sug[1].slice(0, 7), 'ArrowDown + Enter inserted ' + second);
+    await page.keyboard.type('and Edge Ga'); await page.waitForTimeout(150); eq((await page.locator('.qsug-i').first().textContent()).slice(0, 12), 'Edge Gateway', 'name with a space suggested');
+    await page.keyboard.press('Tab'); await page.waitForTimeout(100); eq(await page.locator('#flow-q').inputValue(), second.trim() + ' and "Edge Gateway" ', 'Tab inserted the quoted name');
+    await page.keyboard.press('Enter'); await page.waitForTimeout(300);
+    const applied = second.trim() + ' AND "Edge Gateway"';
+    eq([await qFocus(), (await page.evaluate(() => window.__rre.state().state.ui.flow.cols)).includes('component'), await page.locator('#flow-q').count(), await qMini()], [applied, true, 0, applied], 'applied; components column switched on; editor closed; box shows the search');
+    await qOpen(); await page.fill('#flow-q', 'T.BSI.15 AND XYZ'); await page.keyboard.press('Enter'); await page.waitForTimeout(200);
+    eq([await qFocus(), await page.locator('.qstatus.err').count(), (await page.textContent('.qstatus.err code.qx mark')), await page.locator('#flow-q').count()], [applied, 1, 'XYZ', 1], 'error shown and marked, focus unchanged, editor stays open');
+    await page.click('.view-head h1'); await page.waitForTimeout(300); eq(await page.locator('#flow-q').count(), 1, 'unapplied text keeps the editor open when clicking elsewhere');
+    await page.click('#flow-q-close'); await page.waitForTimeout(150); eq([await page.locator('#flow-q').count(), await qMini()], [0, applied], 'close drops the unapplied text');
+    await page.click('#flow-q-mini'); await page.click('.view-head h1'); await page.waitForTimeout(300); eq(await page.locator('#flow-q').count(), 0, 'without changes, clicking elsewhere closes it');
+    await page.click('.focusbar .btn:has-text("Show everything")'); await page.waitForTimeout(150); eq(page.errors, [], 'script errors');
+  });
+  await test('F20', 'Content filters by clicks (object → generic card → attribute → condition), errors and warnings included; saved, combined with AND / OR / NOT, saved searches nested; renaming and deleting are safe', async () => {
+    const exp = await page.evaluate(() => { const { M } = window.__rre.state(), ids = (l) => l.map((o) => o.id).sort(), rel = (l) => l.filter((r) => !r.notRelevant);
+      const gw = M.risks.filter((r) => r.components.some((c) => /gateway/i.test(c.name))), bad = new Set(M.rmis.filter((m) => m.issues.some((i) => i.cat !== 'warning')));
+      return { nFields: window.__rre.Q.fieldList('risk').length, gw: gw.length, gwRel: ids(rel(gw)), bad: bad.size, gwClean: ids(rel(gw).filter((r) => !r.items.some((o) => bad.has(o.rmi)))),
+        miss: M.risks.filter((r) => r.issues.some((i) => i.code === 'W_MISSING')).length, noGw: M.risks.filter((r) => !/gateway/i.test(r.description)).length,
+        keyWhole: M.rmis.filter((m) => /\bkey\b/i.test(m.text)).length, keySub: M.rmis.filter((m) => /key/i.test(m.text)).length, all: M.risks.length }; });
+    const newFilter = async (type, field, op, word, whole) => {
+      await page.click('#flow-new-filter'); await page.click('.fb-type[data-type="' + type + '"]'); await page.click('.gfield[data-field="' + field + '"]');
+      if (op) await page.click('.fb-cond .seg button:text-is("' + op + '")'); if (word != null) await page.fill('#fb-word', word); if (whole) await page.check('#fb-whole'); await page.waitForTimeout(100);
+      return [+(await page.textContent('#fb-count')), await page.inputValue('#fb-name')];
+    };
+    await page.click('#flow-new-filter'); eq(await page.locator('.fb-type').count(), 6, 'every object type offered'); await page.click('.fb-type[data-type="risk"]');
+    eq(await page.locator('.gcard .gfield').count(), exp.nFields, 'generic card lists every attribute'); assert(await page.locator('.gfield[data-field="errors"]').count() && await page.locator('.gfield[data-field="warnings"]').count(), 'errors and warnings are attributes');
+    await page.click('.dialog .icon-btn'); await page.waitForTimeout(100);
+    const [n1, f1] = await newFilter('risk', 'components', null, 'GateWay'); eq(n1, exp.gw, 'preview: risks whose component contains “gateway”');
+    await page.click('#fb-save-add'); await page.waitForTimeout(300); eq([await qFocus(), await qCol('risk')], ['@' + f1, exp.gwRel], 'saved and added: the search shows these risks');
+    const [n2, f2] = await newFilter('rmi', 'errors', 'is not empty'); eq(n2, exp.bad, 'preview: items with errors'); await page.click('#fb-save'); await page.waitForTimeout(200);
+    const [n3, f3] = await newFilter('risk', 'warnings', null, 'w_missing'); eq(n3, exp.miss, 'preview: warnings contain a check code'); await page.click('#fb-save'); await page.waitForTimeout(200);
+    const [n4] = await newFilter('risk', 'description', 'does not contain', 'gateway'); eq(n4, exp.noGw, 'preview: does not contain'); await page.click('.dialog .icon-btn'); await page.waitForTimeout(100);
+    const [n5] = await newFilter('rmi', 'text', null, 'key'); const [n6] = [+(await (async () => { await page.check('#fb-whole'); await page.waitForTimeout(80); return page.textContent('#fb-count'); })())];
+    eq([n5, n6], [exp.keySub, exp.keyWhole], 'substring / whole word'); assert(exp.keySub > exp.keyWhole, 'sample should contain “key” inside a longer word'); await page.click('.dialog .icon-btn'); await page.waitForTimeout(100);
+    if (!(await page.locator('#flow-lib').count())) await page.click('#flow-lib-btn');
+    await page.click('.lib-row[data-name="' + f2 + '"] .lib-op.op-andnot'); await page.waitForTimeout(250);
+    eq([await qFocus(), await qCol('risk')], ['@' + f1 + ' AND NOT @' + f2, exp.gwClean], 'AND NOT from the library');
+    await page.click('#flow-save'); await page.fill('#sd-name', 'gw clean'); await page.click('#sd-save'); await page.waitForTimeout(200);
+    eq(await page.evaluate(() => window.__rre.Q.searchLib.items.filter((x) => x.kind === 'search').map((x) => [x.name, x.expr])), [['gw clean', '@' + f1 + ' AND NOT @' + f2]], 'saved search');
+    await qApply('NOT @"gw clean"'); eq((await qCol('risk')).length, (await page.evaluate(() => window.__rre.state().M.risks.filter((r) => !r.notRelevant).length)) - exp.gwClean.length, 'saved search used inside another search');
+    await page.click('.lib-row[data-name="gw clean"] [data-act="edit"]'); await page.fill('#sd-expr', '@"gw clean" OR T.BSI.15'); await page.waitForTimeout(100);
+    eq([/refers to itself/.test(await page.textContent('#sd-err')), await page.isDisabled('#sd-save')], [true, true], 'a search cannot use itself'); await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    await page.click('.lib-row[data-name="' + f1 + '"] [data-act="delete"]'); await page.waitForTimeout(150);
+    assert(/is used by @gw clean/.test(await page.textContent('.toast.error')), 'deleting a used filter is blocked'); await page.click('.toast.error .icon-btn');
+    await page.click('.lib-row[data-name="' + f2 + '"] [data-act="edit"]'); await page.fill('#fb-name', 'broken-items'); await page.click('#fb-save'); await page.waitForTimeout(200);
+    eq(await page.evaluate(() => window.__rre.Q.searchLib.items.find((x) => x.name === 'gw clean').expr), '@' + f1 + ' AND NOT @broken-items', 'rename updates the saved search');
+    await page.click('.lib-row[data-name="' + f3 + '"] [data-act="delete"]'); await page.click('#confirm-ok'); await page.waitForTimeout(150);
+    eq(await page.evaluate(() => window.__rre.Q.searchLib.items.map((x) => x.name)), [f1, 'broken-items', 'gw clean'], 'library after rename and delete');
+    eq(page.errors, [], 'script errors');
+  });
+  await test('F21', 'Library: downloaded as a JSON file (no file-system API, nothing in localStorage); loading it restores filters and searches; invalid files are refused', async () => {
+    const dir = path.join(__dirname, 'results', 'library'); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }), page.click('#flow-lib .btn:has-text("Download library")')]);
+    const file = path.join(dir, dl.suggestedFilename()); await dl.saveAs(file); assert(/^RRE_search-library_\d{4}-\d{2}-\d{2}_\d{6}\.json$/.test(dl.suggestedFilename()), 'file name ' + dl.suggestedFilename());
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')), mem = await page.evaluate(() => window.__rre.Q.searchLib.items);
+    eq([saved.format, saved.items], ['risk-register-explorer/search-library', mem], 'file content = library');
+    eq(await page.evaluate(() => [window.__spy.writes.length, window.__spy.creates.length, Object.keys(localStorage).filter((k) => k !== 'rre-theme')]), [0, 0, []], 'no file-system write, nothing stored in the browser');
+    await page.goto(FILE_T); await page.setInputFiles('#file-input', fx('sample.xlsx')); await page.waitForSelector('.topbar'); await nav(page, 'connections');
+    eq(await page.evaluate(() => window.__rre.Q.searchLib.items.length), 0, 'new tab: empty library');
+    await page.click('#flow-lib-btn'); await page.setInputFiles('#lib-file', file); await page.waitForTimeout(300);
+    eq(await page.evaluate(() => window.__rre.Q.searchLib.items), mem, 'library loaded'); assert(/2 added|3 added/.test(await page.textContent('.toast')), 'load message');
+    await qApply('@"gw clean"'); assert((await qCol('risk')).length > 0, 'loaded saved search works');
+    const bad = path.join(dir, 'not-a-library.json'); fs.writeFileSync(bad, JSON.stringify({ format: 'something else', items: [] }));
+    await page.setInputFiles('#lib-file', bad); await page.waitForTimeout(250); assert(/could not be loaded: it is not a search library/.test(await page.textContent('.toast.error')), 'invalid file refused');
+    const mixed = path.join(dir, 'mixed.json'); fs.writeFileSync(mixed, JSON.stringify({ format: 'risk-register-explorer/search-library', items: [{ kind: 'filter', name: 'ok-one', type: 'risk', field: 'id', op: 'contains', text: 'R.' }, { kind: 'filter', name: '<img src=x>', type: 'risk', field: 'id', op: 'contains', text: 'x' }, { kind: 'filter', name: 'bad-field', type: 'risk', field: 'nope', op: 'contains', text: 'x' }, { kind: 'search', name: 'empty', expr: '' }] }));
+    await page.setInputFiles('#lib-file', mixed); await page.waitForTimeout(250); assert(/1 added, 0 replaced, 3 invalid entries skipped/.test(await page.locator('.toast').last().textContent()), 'invalid entries skipped');
+    eq(page.errors, [], 'script errors');
+  });
+  await test('F22', 'Reloading the workbook keeps the search (objects by ID); the Connections export states the search and what each @filter means', async () => {
+    await qApply('@risk-components-gateway AND NOT T.BSI.15'); const before = await qFocus(), risks = await qCol('risk');
+    await page.setInputFiles('#file-input', fx('sample.xlsx')); await page.waitForTimeout(600); await nav(page, 'connections');
+    eq([await qFocus(), await qCol('risk')], [before, risks], 'search and result after reloading the workbook');
+    const dir = path.join(__dirname, 'results', 'library'); const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }), page.click('#export-btn')]); const file = path.join(dir, 'connections.xlsx'); await dl.saveAs(file);
+    const about = JSON.parse(execFileSync('python3', ['-c', 'import sys,json\nfrom openpyxl import load_workbook\nwb=load_workbook(sys.argv[1])\nprint(json.dumps({"about":{str(r[0].value):str(r[1].value) for r in wb["About"].iter_rows()},"paths":wb["Paths"].max_row-1}))', file]).toString());
+    const scope = about.about['Filter / scope'];
+    assert(scope.includes('search = ' + before) && scope.toLowerCase().includes('@risk-components-gateway = risks · affected component contains “gateway”'), 'About: ' + scope); eq(about.paths, risks.length, 'Paths rows = risks shown');
     eq(page.errors, [], 'script errors');
   });
   await test('F6', 'Invalid files give a clear message and leave the tool usable', async () => {
